@@ -1,0 +1,15 @@
+.direnv/
+.venv/
+.sdk/
+result
+/build*
+/conan-build
+/install
+/dist
+.env*
+!.envrc
+demos/*/
+.cache/
+compile_commands.json
+.rvtui-config
+/agent/

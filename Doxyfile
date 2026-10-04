@@ -1,0 +1,30 @@
+# Doxygen config for `just docs`: HTML into build/docs (not committed).
+# Only non-defaults.
+PROJECT_NAME           = rvtui
+PROJECT_NUMBER         = $(RVTUI_VERSION)
+PROJECT_BRIEF          = "Terminal image browser/viewer for OpenEXR, PNG and JPEG"
+OUTPUT_DIRECTORY       = build/docs
+HTML_OUTPUT            = .
+
+INPUT                  = src README.md
+FILE_PATTERNS          = *.h
+RECURSIVE              = YES
+USE_MDFILE_AS_MAINPAGE = README.md
+STRIP_FROM_PATH        = src
+STRIP_FROM_INC_PATH    = src
+
+# `///` comments: the first sentence is the brief description.
+JAVADOC_AUTOBRIEF      = YES
+EXTRACT_ALL            = YES
+EXTRACT_STATIC         = YES
+SORT_MEMBER_DOCS       = NO
+
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+HTML_COLORSTYLE        = AUTO_DARK
+GENERATE_TREEVIEW      = YES
+SOURCE_BROWSER         = YES
+
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = NO
+WARN_IF_INCOMPLETE_DOC = NO

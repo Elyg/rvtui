@@ -1,0 +1,410 @@
+#include "TestContext.h"
+#include "app/FilesPane.h"
+#include "app/InspectorPane.h"
+#include "app/LayersPane.h"
+#include "app/MetaPane.h"
+#include "app/ViewerState.h"
+
+#include <gtest/gtest.h>
+
+#include <iostream>
+#include <memory>
+#include <sstream>
+
+using namespace rv;
+using namespace rvtest;
+using ftxui::Event;
+
+namespace
+{
+
+// Clipboard writes (OSC 52) go to std::cout: keep them out of the test log.
+struct MuteCout
+{
+	std::ostringstream m_sink;
+	std::streambuf* m_old = std::cout.rdbuf(m_sink.rdbuf());
+	~MuteCout()
+	{
+		std::cout.rdbuf(m_old);
+	}
+};
+
+Entry file(const std::string& name)
+{
+	Entry e;
+	e.m_kind = Entry::Kind::FILE;
+	e.m_name = name;
+	e.m_path = "/shots/" + name;
+	return e;
+}
+
+Entry sequence(const std::string& name, int frames)
+{
+	Entry e;
+	e.m_kind = Entry::Kind::SEQUENCE;
+	e.m_name = name;
+	for(int i = 1; i <= frames; ++i)
+	{
+		e.m_frames.push_back("/shots/" + name + "." + std::to_string(i) +
+		                     ".exr");
+		e.m_frameNumbers.push_back(i);
+	}
+	e.m_path = e.m_frames.front();
+	return e;
+}
+
+// A header with one part (two attributes) and the given layers.
+ImageInfoPtr info(const std::vector<std::string>& layers)
+{
+	auto i = std::make_shared<ImageInfo>();
+	PartInfo part;
+	part.m_displayWindow = {0, 0, 7, 3};
+	part.m_dataWindow = part.m_displayWindow;
+	part.m_attributes = {{"compression", "zip", "zip"},
+	                     {"owner", "string", "me"}};
+	i->m_parts.push_back(part);
+	for(const auto& name : layers)
+	{
+		LayerInfo l;
+		l.m_layer = name;
+		l.m_channels = {name.empty() ? "R" : name + ".R"};
+		i->m_layers.push_back(l);
+	}
+	return i;
+}
+
+struct Panes : ::testing::Test
+{
+	Context m_c;
+	ViewerState m_state;
+	Panes()
+	{
+		m_state.m_sources = {{file("a.exr")}, {file("b.exr")}, {file("c.exr")}};
+	}
+};
+
+} // namespace
+
+// --- inspector ---
+
+TEST_F(Panes, InspectorCursorClampsAndGgGoesToTheTop)
+{
+	InspectorPane p(m_state, m_c.m_ctx);
+	EXPECT_TRUE(p.event(key("j"))); // nothing picked: stays put
+	EXPECT_EQ(p.cursor(), 0);
+
+	Sample s;
+	s.m_state = Sample::State::OK;
+	s.m_x = 1;
+	s.m_y = 2;
+	s.m_values = {{"R", 0.5f}, {"G", 0.25f}};
+	m_state.m_picked = s;
+	const int n = static_cast<int>(sampleItems(s).size());
+	for(int i = 0; i < n + 3; ++i)
+	{
+		EXPECT_TRUE(p.event(key("j")));
+	}
+	EXPECT_EQ(p.cursor(), n - 1);
+	EXPECT_TRUE(p.event(key("g")));
+	EXPECT_EQ(p.cursor(), n - 1); // one g waits for the second
+	EXPECT_TRUE(p.event(key("g")));
+	EXPECT_EQ(p.cursor(), 0);
+	EXPECT_TRUE(p.event(key("G")));
+	EXPECT_EQ(p.cursor(), n - 1);
+	EXPECT_TRUE(p.event(key("k")));
+	EXPECT_EQ(p.cursor(), n - 2);
+}
+
+TEST_F(Panes, InspectorCopiesTheLineOrValue)
+{
+	MuteCout mute;
+	InspectorPane p(m_state, m_c.m_ctx);
+	EXPECT_TRUE(p.event(key("y")));
+	EXPECT_EQ(m_c.m_ctx.m_message,
+	          "ctrl+click the image to pick a pixel first");
+	Sample s;
+	s.m_x = 1;
+	s.m_y = 2;
+	m_state.m_picked = s;
+	EXPECT_TRUE(p.event(key("y")));
+	EXPECT_EQ(m_c.m_ctx.m_message, "copied: pixel: [1, 2]");
+	EXPECT_TRUE(p.event(key("Y")));
+	EXPECT_EQ(m_c.m_ctx.m_message, "copied: [1, 2]");
+}
+
+TEST_F(Panes, InspectorPassesOnViewerKeysAndClosesOnItsNumber)
+{
+	InspectorPane p(m_state, m_c.m_ctx);
+	p.setOpen(true);
+	m_state.m_focus = Focus::INSPECT;
+	EXPECT_FALSE(p.event(key("e"))); // exposure: the viewer's
+	EXPECT_FALSE(p.event(key("]")));
+	EXPECT_TRUE(p.event(key("1"))); // focus back to the image, still open
+	EXPECT_EQ(m_state.m_focus, Focus::IMAGE);
+	EXPECT_TRUE(p.isOpen());
+	m_state.m_focus = Focus::INSPECT;
+	EXPECT_TRUE(p.event(key("4")));
+	EXPECT_FALSE(p.isOpen());
+	EXPECT_EQ(m_state.m_focus, Focus::IMAGE);
+}
+
+// --- metadata ---
+
+TEST_F(Panes, MetaItemsListPartsAttributesAndLayers)
+{
+	MetaPane p(m_state, m_c.m_ctx);
+	const auto items = p.items(info({"", "diffuse"}));
+	// title, path, part, 2 attributes, "layers", 2 layers
+	ASSERT_EQ(items.size(), 8u);
+	EXPECT_EQ(items[0].m_name, "a.exr");
+	EXPECT_EQ(items[1].m_value, "/shots/a.exr");
+	EXPECT_EQ(items[3].m_name, "compression");
+	EXPECT_EQ(items[7].m_name, "diffuse");
+	EXPECT_TRUE(p.items(nullptr).empty());
+}
+
+TEST_F(Panes, MetaCursorClampsAndGg)
+{
+	MetaPane p(m_state, m_c.m_ctx);
+	const auto i = info({""});
+	const int n = static_cast<int>(p.items(i).size());
+	for(int k = 0; k < n + 2; ++k)
+	{
+		EXPECT_TRUE(p.event(key("j"), i));
+	}
+	EXPECT_EQ(p.cursor(), n - 1);
+	EXPECT_TRUE(p.event(key("g"), i));
+	EXPECT_TRUE(p.event(key("g"), i));
+	EXPECT_EQ(p.cursor(), 0);
+	EXPECT_TRUE(p.event(key("k"), i));
+	EXPECT_EQ(p.cursor(), 0);
+	EXPECT_TRUE(p.event(Event::CtrlD, i));
+	EXPECT_GT(p.cursor(), 0);
+}
+
+TEST_F(Panes, MetaVisualSelectionCopiesLines)
+{
+	MuteCout mute;
+	MetaPane p(m_state, m_c.m_ctx);
+	const auto i = info({""});
+	EXPECT_TRUE(p.event(key("j"), i));
+	EXPECT_TRUE(p.event(key("j"), i));
+	EXPECT_TRUE(p.event(key("j"), i)); // the "compression" attribute
+	EXPECT_TRUE(p.event(key("y"), i));
+	EXPECT_EQ(m_c.m_ctx.m_message, "copied: compression: zip");
+	EXPECT_TRUE(p.event(key("v"), i));
+	EXPECT_TRUE(p.event(key("j"), i));
+	EXPECT_TRUE(p.event(key("Y"), i));
+	EXPECT_EQ(m_c.m_ctx.m_message, "copied 2 lines");
+}
+
+TEST_F(Panes, MetaPassesOnViewerKeysAndClosesOnItsNumber)
+{
+	MetaPane p(m_state, m_c.m_ctx);
+	p.setOpen(true);
+	m_state.m_focus = Focus::META;
+	EXPECT_FALSE(p.event(key("e"), nullptr));
+	EXPECT_TRUE(p.event(key("2"), nullptr));
+	EXPECT_FALSE(p.isOpen());
+	EXPECT_EQ(m_state.m_focus, Focus::IMAGE);
+	p.scroll(-5); // never above the top
+	p.scroll(3);
+}
+
+// --- layers ---
+
+TEST_F(Panes, LayersCursorShowsTheLayerItIsOn)
+{
+	LayersPane p(m_state);
+	const auto i = info({"", "diffuse", "specular"});
+	m_state.m_layerLabel = "diffuse";
+	p.show(i);
+	EXPECT_TRUE(p.isOpen());
+	EXPECT_EQ(m_state.m_focus, Focus::LAYERS);
+	EXPECT_EQ(p.cursor(), 1); // starts on the layer shown
+	EXPECT_TRUE(p.event(key("j"), i));
+	EXPECT_EQ(m_state.m_layerLabel, "specular");
+	EXPECT_TRUE(p.event(key("j"), i)); // clamped at the last
+	EXPECT_EQ(p.cursor(), 2);
+	EXPECT_TRUE(p.event(key("g"), i));
+	EXPECT_EQ(m_state.m_layerLabel, i->m_layers[0].label());
+	EXPECT_TRUE(p.event(key("k"), i));
+	EXPECT_EQ(p.cursor(), 0);
+	EXPECT_TRUE(p.event(key("G"), i));
+	EXPECT_EQ(m_state.m_layerLabel, "specular");
+}
+
+TEST_F(Panes, LayersClickPicksARowAndPassesOnOtherKeys)
+{
+	LayersPane p(m_state);
+	const auto i = info({"", "diffuse"});
+	p.click(2, i); // row 2 = the second layer (row 0 is the title)
+	EXPECT_EQ(m_state.m_layerLabel, "diffuse");
+	EXPECT_EQ(m_state.m_focus, Focus::LAYERS);
+	p.click(9, i); // below the list: focus only
+	EXPECT_EQ(m_state.m_layerLabel, "diffuse");
+	EXPECT_FALSE(p.event(key("e"), i));
+	EXPECT_TRUE(p.event(key("5"), i));
+	EXPECT_FALSE(p.isOpen());
+	EXPECT_EQ(m_state.m_focus, Focus::IMAGE);
+}
+
+// --- files ---
+
+TEST_F(Panes, FilesCursorRunsFromGlobalToTheLastFile)
+{
+	FilesPane p(m_state, m_c.m_ctx);
+	m_state.m_current = 1;
+	p.show();
+	EXPECT_EQ(p.cursor(), 1);
+	EXPECT_EQ(m_state.m_focus, Focus::FILES);
+	for(int i = 0; i < 4; ++i)
+	{
+		EXPECT_TRUE(p.event(key("k")));
+	}
+	EXPECT_EQ(p.cursor(), -1); // the global row
+	for(int i = 0; i < 5; ++i)
+	{
+		EXPECT_TRUE(p.event(key("j")));
+	}
+	EXPECT_EQ(p.cursor(), 2);
+	EXPECT_TRUE(p.event(Event::Return));
+	EXPECT_EQ(m_state.m_current, 2);
+	EXPECT_FALSE(p.event(key("y"))); // not a files key
+}
+
+TEST_F(Panes, FilesReorderKeepsShowingTheSameImage)
+{
+	FilesPane p(m_state, m_c.m_ctx);
+	p.show(); // on a.exr, shown
+	EXPECT_TRUE(p.event(key("J")));
+	EXPECT_EQ(m_state.m_sources[1].m_entry.m_name, "a.exr");
+	EXPECT_EQ(m_state.m_current, 1);
+	EXPECT_EQ(p.cursor(), 1);
+	EXPECT_TRUE(p.event(key("K")));
+	EXPECT_EQ(m_state.m_sources[0].m_entry.m_name, "a.exr");
+	EXPECT_EQ(m_state.m_current, 0);
+}
+
+TEST_F(Panes, FilesDropKeepsTheLastImage)
+{
+	FilesPane p(m_state, m_c.m_ctx);
+	m_state.m_current = 2;
+	p.show();
+	EXPECT_TRUE(p.event(key("x")));
+	ASSERT_EQ(m_state.m_sources.size(), 2u);
+	EXPECT_EQ(m_state.m_current, 1);
+	EXPECT_TRUE(p.event(key("x")));
+	EXPECT_TRUE(p.event(key("x")));
+	EXPECT_EQ(m_state.m_sources.size(), 1u);
+	EXPECT_EQ(m_c.m_ctx.m_message, "the last image stays");
+}
+
+TEST_F(Panes, FilesExpandsASequenceAndFoldsItBack)
+{
+	m_state.m_sources = {{file("a.exr")}, {sequence("shot", 4)}};
+	m_state.m_current = 1;
+	m_state.m_frame = 2;
+	FilesPane p(m_state, m_c.m_ctx);
+	p.show();
+	EXPECT_TRUE(p.event(key("e")));
+	ASSERT_EQ(m_state.m_sources.size(), 5u);
+	EXPECT_EQ(m_state.m_current, 3); // the frame that was on screen
+	EXPECT_EQ(p.cursor(), 3);
+	EXPECT_FALSE(m_state.m_sources[2].m_entry.m_expandedFrom.empty());
+	EXPECT_TRUE(p.event(key("e"))); // on a frame: fold
+	ASSERT_EQ(m_state.m_sources.size(), 2u);
+	EXPECT_EQ(m_state.m_sources[1].m_entry.m_kind, Entry::Kind::SEQUENCE);
+	EXPECT_EQ(m_state.m_current, 1);
+	EXPECT_EQ(m_state.m_frame, 2);
+}
+
+TEST_F(Panes, FilesSequenceTooLongToExpand)
+{
+	m_state.m_sources = {{sequence("long", FilesPane::MAX_EXPAND_FRAMES + 1)}};
+	FilesPane p(m_state, m_c.m_ctx);
+	p.show();
+	EXPECT_TRUE(p.event(key("e")));
+	EXPECT_EQ(m_state.m_sources.size(), 1u);
+	EXPECT_EQ(m_c.m_ctx.m_message, "101 frames: expands up to 100");
+}
+
+TEST_F(Panes, FilesIntoAnnotationsAndBack)
+{
+	FilesPane p(m_state, m_c.m_ctx);
+	p.show();
+	EXPECT_TRUE(p.event(key("k"))); // global
+	EXPECT_TRUE(p.event(key("l")));
+	ASSERT_TRUE(p.annotations().isOpen());
+	EXPECT_EQ(p.annotations().group(), 0);
+	EXPECT_TRUE(p.event(key("h")));
+	EXPECT_FALSE(p.annotations().isOpen());
+	EXPECT_EQ(p.cursor(), -1);
+
+	EXPECT_TRUE(p.event(key("j")));
+	EXPECT_TRUE(p.event(key("j"))); // b.exr
+	EXPECT_TRUE(p.event(key("l")));
+	EXPECT_EQ(p.annotations().group(), 1);
+	EXPECT_EQ(m_state.m_current, 1);
+	EXPECT_TRUE(p.event(key("h")));
+	EXPECT_EQ(p.cursor(), 1);
+}
+
+TEST_F(Panes, AnnotationLineIsTypedLiveAndCommitted)
+{
+	FilesPane p(m_state, m_c.m_ctx);
+	p.show();
+	EXPECT_TRUE(p.event(key("l"))); // a.exr's set, cursor on the first slot
+	EXPECT_TRUE(p.event(key("o")));
+	ASSERT_TRUE(p.annotations().editing());
+	// Looked up each time: the sets move as they are used (most recent first).
+	const std::string srcKey = sourceKey(m_state.m_sources[0]);
+	auto bottomLeft = [&]
+	{ return m_c.m_ann.findSource(srcKey)->lines(Slot::BL); };
+	for(const char* c : {"h", "i"})
+	{
+		EXPECT_TRUE(p.event(key(c)));
+	}
+	EXPECT_EQ(bottomLeft(), (std::vector<std::string>{"hi"})); // live
+	EXPECT_TRUE(p.event(key("3"))); // typed, not "close the pane"
+	EXPECT_TRUE(p.isOpen());
+	EXPECT_TRUE(p.event(Event::Return));
+	EXPECT_FALSE(p.annotations().editing());
+	EXPECT_EQ(bottomLeft(), (std::vector<std::string>{"hi3"}));
+	ASSERT_FALSE(m_c.m_ann.history().empty());
+	EXPECT_EQ(m_c.m_ann.history().front(), "hi3");
+
+	// Esc on a new line drops it.
+	EXPECT_TRUE(p.event(key("o")));
+	EXPECT_TRUE(p.event(key("x")));
+	EXPECT_TRUE(p.event(Event::Escape));
+	EXPECT_EQ(bottomLeft(), (std::vector<std::string>{"hi3"}));
+}
+
+TEST_F(Panes, FilesDTwiceClearsEveryAnnotation)
+{
+	m_c.m_ann.global().lines(Slot::TL).push_back("g");
+	m_c.m_ann.source(sourceKey(m_state.m_sources[1]))
+	    .lines(Slot::BR)
+	    .push_back("b");
+	FilesPane p(m_state, m_c.m_ctx);
+	p.show();
+	EXPECT_TRUE(p.event(key("D")));
+	EXPECT_EQ(m_c.m_ctx.m_message, "D again: clear all annotations");
+	EXPECT_FALSE(m_c.m_ann.global().empty());
+	EXPECT_TRUE(p.event(key("D")));
+	EXPECT_TRUE(m_c.m_ann.global().empty());
+	EXPECT_TRUE(m_state.sourceAnnotations(m_c.m_ann, 1)->empty());
+}
+
+TEST_F(Panes, FilesClosesOnItsNumberAndHandsBackFocus)
+{
+	FilesPane p(m_state, m_c.m_ctx);
+	p.show();
+	EXPECT_TRUE(p.event(key("1")));
+	EXPECT_EQ(m_state.m_focus, Focus::IMAGE);
+	EXPECT_TRUE(p.isOpen());
+	p.show();
+	EXPECT_TRUE(p.event(key("3")));
+	EXPECT_FALSE(p.isOpen());
+}

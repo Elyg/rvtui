@@ -1,0 +1,2 @@
+#pragma once
+#define RVTUI_VERSION "@PROJECT_VERSION_STRING@"

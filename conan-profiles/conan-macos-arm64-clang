@@ -1,0 +1,17 @@
+[settings]
+arch=armv8
+build_type=Release
+compiler=apple-clang
+compiler.cppstd=20
+compiler.libcxx=libc++
+compiler.version=21
+os=Macos
+os.version=13.0
+
+[buildenv]
+CC=/usr/bin/clang
+CXX=/usr/bin/clang++
+
+[conf]
+tools.cmake.cmaketoolchain:generator=Ninja
+tools.cmake.cmaketoolchain:user_presets=False

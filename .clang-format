@@ -1,0 +1,39 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+# Explicit, not derived: a Windows checkout has CRLF in the working tree, and
+# "derive from the file" makes the formatter's behaviour depend on which machine
+# ran it. The sources are LF everywhere (see .gitattributes).
+LineEnding: LF
+FixNamespaceComments: true
+AccessModifierOffset: -4
+AlignAfterOpenBracket: true
+AlignEscapedNewlinesLeft: false
+AllowShortBlocksOnASingleLine: true
+AllowShortFunctionsOnASingleLine: None
+AlwaysBreakTemplateDeclarations: true
+BinPackArguments: false
+BinPackParameters: false
+BreakBeforeBraces: Allman
+# Every if/else/for/while body gets braces, even a single statement.
+InsertBraces: true
+IndentCaseLabels: true
+IndentWidth: 4
+PenaltyBreakBeforeFirstCallParameter: 200
+PenaltyExcessCharacter: 100
+PenaltyReturnTypeOnItsOwnLine: 100
+PointerAlignment: Left
+SpaceBeforeParens: Never
+TabWidth: 4
+UseTab: ForIndentation
+# Include order: main header, local ("..."), external (<lib/...>), standard
+# library (<...> with no directory). The main header gets priority 0 on its own.
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^"'
+    Priority: 1
+  - Regex: '^<[^>]*/'
+    Priority: 2
+  - Regex: '^<'
+    Priority: 3
+...

@@ -1,0 +1,146 @@
+#pragma once
+
+#include "image/Render.h"
+#include "term/Caps.h"
+
+#include <array>
+#include <cstdint>
+#include <deque>
+#include <functional>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <utility>
+
+namespace rv::kitty
+{
+
+std::string base64(const uint8_t* data, size_t n);
+/// One zlib stream (kitty o=z).
+std::string zlibCompress(const uint8_t* data, size_t n);
+/// Whether compressing [data, data + n) pays off: compresses a few samples and
+/// says no when they shrink by less than 10% (film grain, noise).
+bool worthCompressing(const uint8_t* data, size_t n);
+
+/// Wrap an escape sequence in tmux DCS passthrough (requires `allow-passthrough
+/// on`).
+std::string tmuxWrap(std::string_view seq);
+
+/// How transmit() and friends place the image.
+struct TransmitOptions
+{
+	uint32_t m_id = 0;          ///< kitty image id
+	int m_cols = 0, m_rows = 0; ///< placement size in cells (0 = natural size)
+	bool m_virtualPlacement =
+	    true; ///< U=1: displayed through Unicode placeholder cells
+	bool m_tmux = false;
+	size_t m_chunk = 4096; ///< base64 bytes per escape
+};
+
+/// Full escape sequence transmitting `img` in the escapes themselves (base64
+/// RGBA, zlib-compressed when worthCompressing) and creating a placement.
+std::string transmit(const Rgba8Image& img, const TransmitOptions& opt);
+/// The same, but the raw RGBA pixels are in the POSIX shared memory object
+/// `name` (t=s, see writeSharedMemory) or, with `file`, the file at path
+/// `name` (t=f, see writeFile); only the name goes down the pipe.
+std::string transmitShared(const Rgba8Image& img,
+                           std::string_view name,
+                           const TransmitOptions& opt,
+                           bool file = false);
+/// Create shared memory object `name` holding the raw pixels of `img`. The
+/// terminal unlinks it once read. False on failure.
+bool writeSharedMemory(const std::string& name, const Rgba8Image& img);
+/// Create the file `path` holding the raw pixels of `img`. Terminals leave it
+/// alone (every tmux client can read it); the Transmitter removes it.
+bool writeFile(const std::string& path, const Rgba8Image& img);
+
+/// Delete an image and free its data.
+std::string deleteImage(uint32_t id, bool tmux);
+
+/// Sends kitty images to the terminal and keeps what that needs between
+/// draws: the image ids in use, deletes waiting for the next frame, and the
+/// shared memory objects not known to be read yet. One per App, handed to
+/// every ImageSlot. Thread-safe: slots encode on their own threads.
+class Transmitter
+{
+public:
+	using WriteFn = std::function<void(std::string_view bytes, bool flush)>;
+
+	/// @param tmux     wrap escapes in tmux passthrough.
+	/// @param transfer how pixels reach the terminal.
+	/// @param write    where escapes go (term::writeRaw; a capture in tests).
+	Transmitter(bool tmux, Transfer transfer, WriteFn write);
+	/// Removes the shared memory / files still around.
+	~Transmitter();
+	Transmitter(const Transmitter&) = delete;
+	Transmitter& operator=(const Transmitter&) = delete;
+
+	[[nodiscard]] bool tmux() const noexcept
+	{
+		return m_tmux;
+	}
+	[[nodiscard]] Transfer transfer() const noexcept
+	{
+		return m_transfer;
+	}
+
+	/// Non-zero 8-bit image id (placeholder foreground is a 256-palette
+	/// colour), never one still held: two live slots sharing an id would show
+	/// each other's bitmap. Give it back with releaseId when done.
+	[[nodiscard]] uint32_t allocId();
+	void releaseId(uint32_t id); ///< see allocId()
+
+	/// Escapes transmitting `img` (opt.m_tmux is set from this transmitter),
+	/// through shared memory or a file when that is the transfer mode, else
+	/// inline. Writes nothing: call write() with the result. Safe from any
+	/// thread.
+	[[nodiscard]] std::string encode(const Rgba8Image& img,
+	                                 TransmitOptions opt);
+	/// Send escapes to the terminal.
+	void write(std::string_view bytes, bool flush = false);
+
+	/// Queue deleting image `id`; takePendingDeletes() hands the escapes over
+	/// for the caller to write when the frame no longer shows it.
+	void queueDelete(uint32_t id);
+	[[nodiscard]] std::string takePendingDeletes(); ///< empties the queue
+	[[nodiscard]] bool hasPendingDeletes();
+
+	/// Shared memory objects / files kept until removed, per image id: an
+	/// ImageSlot sends every picture under its one id and has at most four
+	/// alive (on screen, being prepared, two prepared). Terminals read them in
+	/// order, so by this many newer ones under the same id the oldest is done
+	/// with or was dropped (e.g. no terminal attached to tmux). One shared
+	/// count deleted a tile sheet's files before the terminal read them.
+	static constexpr size_t MAX_IN_FLIGHT = 8;
+
+private:
+	const bool m_tmux;
+	const Transfer m_transfer;
+	const WriteFn m_write;
+	std::mutex m_mutex;
+	std::array<bool, 256> m_used{};
+	uint32_t m_next;
+	std::string m_deletes;
+	void removeLocal(const std::string& name) const;
+	void removeStaleFiles() const;
+
+	std::string m_fileDir; ///< Transfer::FILE: where the files go
+	/// Per image id: created, maybe not read; oldest first.
+	std::unordered_map<uint32_t, std::deque<std::string>> m_local;
+	uint64_t m_localCount = 0;
+};
+
+/// Placeholder cell text: U+10EEEE + row diacritic + column diacritic (UTF-8).
+std::string placeholderCell(int row, int col);
+constexpr int MAX_PLACEHOLDER_INDEX = 297;
+/// A placeholder without diacritics: the terminal takes the row from the cell
+/// to its left and the column as that cell's plus one (same image id).
+std::string barePlaceholderCell();
+/// Row and column of a placeholderCell(); nullopt for any other text.
+std::optional<std::pair<int, int>> placeholderRowCol(std::string_view cell);
+
+std::string utf8(char32_t cp); ///< one code point as UTF-8
+
+} // namespace rv::kitty

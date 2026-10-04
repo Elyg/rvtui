@@ -1,0 +1,36 @@
+name: ci
+
+# Not on plain pushes to main: only PRs into main and release tags.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    tags: ["v*"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - name: format-check
+        run: nix develop .#ci -c ./scripts/format.sh --check
+      - name: lint (naming)
+        run: |
+          nix develop .#ci -c bash -c '
+            cmake -S . -B build/ci -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Debug &&
+            ./scripts/lint.sh build/ci'
+
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      # Builds from nixpkgs deps and runs the unit tests (doCheck).
+      - run: nix build .#default -L

@@ -1,0 +1,64 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  linux-static:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      # Fully static musl binary: runs on any Linux.
+      - run: nix build .#static -L
+      - run: |
+          mkdir -p dist
+          tar -C result/bin -czf "dist/rvtui-${GITHUB_REF_NAME#v}-linux-${{ matrix.arch }}.tar.gz" rvtui
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/*.tar.gz
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # version comes from the tag
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: conan-macos-arm64-${{ hashFiles('conanfile.py', 'conan-profiles/*') }}
+      # Apple clang + static conan deps: depends only on system libraries.
+      - run: nix develop -c just package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: dist/*.tar.gz
+
+  release:
+    needs: [linux-static, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+          generate_release_notes: true

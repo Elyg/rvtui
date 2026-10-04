@@ -1,0 +1,95 @@
+#pragma once
+
+#include "app/Annotations.h"
+#include "image/Render.h"
+#include "image/Sequence.h"
+
+#include <ftxui/screen/box.hpp>
+
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace rv
+{
+
+/// One image or sequence open in the viewer.
+struct Source
+{
+	Entry m_entry;
+	/// Frame `i` (clamped); the file itself for a single image.
+	std::filesystem::path frame(int i) const;
+	int frameCount() const;
+	std::string frameLabel(int i) const; ///< number from the file name
+};
+
+/// Key of a source in the annotations state file: absolute dir / display name
+/// ("/shots/a.####.exr").
+std::string sourceKey(const Source& s);
+
+/// Keyboard focus inside the viewer, lazygit style: the image [1] or a pane.
+enum class Focus
+{
+	IMAGE,
+	META,
+	FILES,
+	INSPECT,
+	LAYERS
+};
+
+/// A pixel read from whatever image is under a terminal cell (the main view, or
+/// a tile), for the inspector and the click colour picker.
+struct Sample
+{
+	enum class State
+	{
+		NONE,    ///< no image under the cell
+		LOADING, ///< no pixels decoded yet
+		OUTSIDE, ///< outside the data window
+		OK
+	};
+	State m_state = State::NONE;
+	int m_x = 0, m_y = 0;
+	bool m_exact = false; ///< full resolution (else what is on screen, ≈)
+	std::string m_layer;
+	std::vector<std::pair<std::string, float>> m_values;
+	float m_luma = 0.0f;
+	int m_r = 0, m_g = 0, m_b = 0;  ///< display-transformed, 8-bit
+	float m_rgba[4] = {0, 0, 0, 1}; ///< file values (linear), for readouts
+	bool m_hasAlpha = false;
+};
+
+/// What the viewer's panes read and change. Owned by Viewer; the panes hold a
+/// reference, never a pointer back to the Viewer.
+struct ViewerState
+{
+	std::vector<Source> m_sources;
+	int m_current = 0; ///< active source
+	int m_frame = 0;
+	std::string m_layerLabel;
+	DisplayParams m_disp;
+	ViewParams m_view;
+	Focus m_focus = Focus::IMAGE;
+	std::optional<Sample> m_picked; ///< last colour clicked (until viewer exit)
+
+	/// The current frame of the active source.
+	std::filesystem::path currentFramePath() const;
+	int frameCount() const; ///< the longest source's
+	/// The lines source `i` adds (nullptr: none, or no such source).
+	const AnnotationSet* sourceAnnotations(const Annotations& ann, int i) const;
+};
+
+/// Widths of the side columns: left (files / layers), right (inspector /
+/// metadata).
+int leftPanelWidth();
+int sidePanelWidth(); ///< see leftPanelWidth()
+
+/// Whether cell (x, y) is inside `b`.
+inline bool inside(const ftxui::Box& b, int x, int y) noexcept
+{
+	return x >= b.x_min && x <= b.x_max && y >= b.y_min && y <= b.y_max;
+}
+
+} // namespace rv
