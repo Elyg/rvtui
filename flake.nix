@@ -30,12 +30,22 @@
               prev.${name};
           flags = fs: old: { cmakeFlags = (old.cmakeFlags or [ ]) ++ fs; };
           none = _: { };
+          # catch2 is only there for the tests. The static stdenv moves buildInputs into
+          # propagatedBuildInputs, so drop it from both.
+          noCatch2 =
+            old:
+            let
+              keep = builtins.filter (p: (p.pname or "") != "catch2");
+            in
+            {
+              buildInputs = keep (old.buildInputs or [ ]);
+              propagatedBuildInputs = keep (old.propagatedBuildInputs or [ ]);
+            };
         in
         {
           fmt = noTests "fmt" (flags [ "-DFMT_TEST=OFF" ]);
-          # catch2 is only there for the tests.
-          spdlog = noTests "spdlog" (old: flags [ "-DSPDLOG_BUILD_TESTS=OFF" ] old // { buildInputs = [ ]; });
-          cli11 = noTests "cli11" (old: flags [ "-DCLI11_BUILD_TESTS=OFF" ] old // { buildInputs = [ ]; });
+          spdlog = noTests "spdlog" (old: flags [ "-DSPDLOG_BUILD_TESTS=OFF" ] old // noCatch2 old);
+          cli11 = noTests "cli11" (old: flags [ "-DCLI11_BUILD_TESTS=OFF" ] old // noCatch2 old);
           libdeflate = noTests "libdeflate" (flags [ "-DLIBDEFLATE_BUILD_TESTS=OFF" ]);
           imath = noTests "imath" (flags [ "-DBUILD_TESTING=OFF" ]);
           openexr = noTests "openexr" (flags [ "-DBUILD_TESTING=OFF" ]);
