@@ -23,6 +23,9 @@ struct Source
 	std::filesystem::path frame(int i) const;
 	int frameCount() const;
 	std::string frameLabel(int i) const; ///< number from the file name
+	/// The frame whose file number is `number`, else the nearest one (the
+	/// earlier on a tie); 0 for a single image.
+	int indexForFrameNumber(int number) const;
 };
 
 /// Key of a source in the annotations state file: absolute dir / display name
@@ -36,7 +39,8 @@ enum class Focus
 	META,
 	FILES,
 	INSPECT,
-	LAYERS
+	LAYERS,
+	COLOUR
 };
 
 /// A pixel read from whatever image is under a terminal cell (the main view, or
@@ -77,6 +81,9 @@ struct ViewerState
 	/// The current frame of the active source.
 	std::filesystem::path currentFramePath() const;
 	int frameCount() const; ///< the longest source's
+	/// The sequence `:` frame numbers refer to: the active source, else the
+	/// first sequence open; nullptr when none is a sequence.
+	const Source* numberedSource() const;
 	/// The lines source `i` adds (nullptr: none, or no such source).
 	const AnnotationSet* sourceAnnotations(const Annotations& ann, int i) const;
 };

@@ -6,8 +6,9 @@
 
 #include <algorithm>
 #include <cctype>
-#include <fnmatch.h>
 #include <map>
+#include <regex>
+#include <string_view>
 #include <system_error>
 
 namespace fs = std::filesystem;
@@ -203,6 +204,67 @@ std::vector<Entry> listDirectory(const fs::path& dir, bool showHidden)
 	return dirs;
 }
 
+namespace
+{
+
+// A filename glob as a regex: * ? [...] as fnmatch, `#` a digit (`####`
+// exactly four), and a lone `#` any number of them (padding unknown).
+std::regex globRegex(const std::string& glob)
+{
+	std::string re;
+	for(size_t i = 0; i < glob.size(); ++i)
+	{
+		const char c = glob[i];
+		if(c == '#')
+		{
+			size_t n = 1;
+			while(i + n < glob.size() && glob[i + n] == '#')
+			{
+				++n;
+			}
+			re += n == 1 ? "[0-9]+" : "[0-9]{" + std::to_string(n) + "}";
+			i += n - 1;
+		}
+		else if(c == '*')
+		{
+			re += ".*";
+		}
+		else if(c == '?')
+		{
+			re += '.';
+		}
+		else if(c == '[' && glob.find(']', i + 2) != std::string::npos)
+		{
+			// A bracket expression, `]` first allowed, `!` negates.
+			const size_t close = glob.find(']', i + 2);
+			std::string set = glob.substr(i + 1, close - i - 1);
+			if(set.starts_with('!'))
+			{
+				set[0] = '^';
+			}
+			re += "[" + set + "]";
+			i = close;
+		}
+		else if(c == '\\' && i + 1 < glob.size())
+		{
+			re += '\\';
+			re += glob[++i];
+		}
+		else
+		{
+			if(std::string_view(".^$|()[]{}+\\").find(c) !=
+			   std::string_view::npos)
+			{
+				re += '\\';
+			}
+			re += c;
+		}
+	}
+	return std::regex(re);
+}
+
+} // namespace
+
 std::vector<Entry> entriesForArgs(const std::vector<std::string>& args,
                                   std::vector<std::string>& missing)
 {
@@ -238,10 +300,15 @@ std::vector<Entry> entriesForArgs(const std::vector<std::string>& args,
 			continue;
 		}
 		// A glob the shell did not expand (quoted, or `#` frame padding).
-		std::string pattern;
-		for(char c : name)
+		std::regex pattern;
+		try
 		{
-			pattern += c == '#' ? std::string("[0-9]") : std::string(1, c);
+			pattern = globRegex(name);
+		}
+		catch(const std::regex_error&)
+		{
+			missing.push_back(arg);
+			continue;
 		}
 		const fs::path dir = p.parent_path().empty() ? "." : p.parent_path();
 		bool any = false;
@@ -249,8 +316,7 @@ std::vector<Entry> entriesForArgs(const std::vector<std::string>& args,
 		    it.increment(ec))
 		{
 			const std::string f = it->path().filename().string();
-			if(it->is_regular_file(ec) &&
-			   fnmatch(pattern.c_str(), f.c_str(), 0) == 0)
+			if(it->is_regular_file(ec) && std::regex_match(f, pattern))
 			{
 				add(it->path());
 				any = true;

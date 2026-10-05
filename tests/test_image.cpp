@@ -426,6 +426,46 @@ TEST(ImageService, ReloadsFileChangedOnDisk)
 	EXPECT_EQ(after->m_layers[0].m_channels.size(), 4u);
 }
 
+TEST(ImageService, DemotedFramesGoFirstSoALoopKeepsSome)
+{
+	// Five 64x64 RGB float frames (48 KiB each) in room for three: a loop
+	// bigger than the cache.
+	std::vector<fs::path> frames;
+	for(int i = 0; i < 5; ++i)
+	{
+		frames.push_back(writeExr("loop." + std::to_string(i) + ".exr",
+		                          {"R", "G", "B"},
+		                          64,
+		                          64));
+	}
+	const size_t frame = 64 * 64 * 3 * sizeof(float);
+	// Misses in the second loop, playing each frame then (maybe) demoting it.
+	auto secondLoopMisses = [&](bool demote)
+	{
+		rv::ImageService svc(nullptr, 3 * frame + 16 * 4096, 1);
+		int misses = 0;
+		for(int loop = 0; loop < 2; ++loop)
+		{
+			for(const auto& p : frames)
+			{
+				misses += loop == 1 && !svc.hasLayer(p, "rgba", 1);
+				for(int i = 0; i < 500 && !svc.layer(p, "rgba", 1); ++i)
+				{
+					std::this_thread::sleep_for(std::chrono::milliseconds(5));
+				}
+				if(demote)
+				{
+					svc.demote(p, "rgba", 1);
+				}
+			}
+		}
+		return misses;
+	};
+	// Plain LRU evicts each frame just before it comes round again.
+	EXPECT_EQ(secondLoopMisses(false), 5);
+	EXPECT_LT(secondLoopMisses(true), 5);
+}
+
 TEST(ImageService, RetriesAfterBrokenFileIsFixed)
 {
 	fs::path p = tmpDir() / "half-written.exr";

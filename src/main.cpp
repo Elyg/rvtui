@@ -13,7 +13,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
+#include <string>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -150,7 +152,8 @@ int main(int argc, char** argv)
 	cli.add_option("paths",
 	               paths,
 	               "Directory, or image(s) to view; a sequence needs a glob: "
-	               "shot.*.exr or 'shot.####.exr'");
+	               "shot.*.exr, 'shot.####.exr' or 'shot.#.exr' (any "
+	               "padding)");
 	cli.add_option("--dump",
 	               dumpPath,
 	               "Print layers, channels and metadata, then exit");
@@ -167,6 +170,19 @@ int main(int argc, char** argv)
 	    "--chooser-file",
 	    chooserFile,
 	    "On open (Enter on a file / o), write chosen paths here and exit");
+	std::uint64_t cacheBytes = rv::ImageService::DEFAULT_BUDGET;
+	cli.add_option("--cache",
+	               cacheBytes,
+	               "Memory for decoded images, e.g. 8G or 512M (default 4G)")
+	    ->transform(CLI::AsSizeValue(false))
+	    ->check(CLI::Validator(
+	        [](const std::string& bytes)
+	        {
+		        return std::stoull(bytes) < (std::uint64_t(64) << 20)
+		                   ? std::string("at least 64M")
+		                   : std::string();
+	        },
+	        ""));
 	bool doctor = false;
 	cli.add_flag("--doctor",
 	             doctor,
@@ -198,6 +214,7 @@ int main(int argc, char** argv)
 		opts.m_transfer = transfer;
 		opts.m_chooserFile = chooserFile;
 		opts.m_cwdFile = cwdFile;
+		opts.m_cacheBytes = cacheBytes;
 		return rv::runApp(opts);
 	}
 	catch(const std::exception& e)

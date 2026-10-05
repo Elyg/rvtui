@@ -16,6 +16,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace rv
 {
@@ -229,6 +230,9 @@ void paintOverlay(ftxui::Screen& screen,
 /// Renders `child`, then calls `after` to draw on top of it.
 ftxui::Element drawAfter(ftxui::Element child,
                          std::function<void(ftxui::Screen&)> after);
+/// Each child laid out in its own box, given relative to the top-left of the
+/// element's box (parallel vectors); the element takes what it is given.
+ftxui::Element placeAt(ftxui::Elements children, std::vector<ftxui::Box> boxes);
 /// Drop the diacritics of every kitty placeholder cell whose left neighbour
 /// is the same image one column back: the terminal infers them. Halves what a
 /// picture costs to print (8 → 4 bytes a cell); FTXUI reprints every cell each

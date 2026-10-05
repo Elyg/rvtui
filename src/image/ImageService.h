@@ -35,8 +35,10 @@ public:
 		PREFETCH
 	};
 
+	static constexpr size_t DEFAULT_BUDGET = size_t(4) << 30; ///< 4 GiB
+
 	ImageService(std::function<void()> notify,
-	             size_t budgetBytes = size_t(2) << 30,
+	             size_t budgetBytes = DEFAULT_BUDGET,
 	             int threads = 3);
 	~ImageService();
 
@@ -69,6 +71,15 @@ public:
 	/// deleted) has its cached header, layers and load error dropped, so the
 	/// next request decodes the new contents. Returns true if anything changed.
 	bool checkForChanges(const std::vector<std::filesystem::path>& paths);
+
+	/// Make a cached layer the next to go when room is needed. Playback
+	/// calls it for the frame it just left: a loop needs that frame again
+	/// last, so a sequence larger than the cache keeps its first frames
+	/// between loops instead of evicting each one just before it comes
+	/// round (what plain LRU does to a loop). No-op when not cached.
+	void demote(const std::filesystem::path& p,
+	            const std::string& layerLabel,
+	            int reduce);
 
 	/// Drop queued prefetch jobs (e.g. when the playback range or selection
 	/// changes).

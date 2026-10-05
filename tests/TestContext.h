@@ -39,11 +39,13 @@ struct Context
 	                               [](std::string_view, bool) {}};
 	rv::ImageService m_svc{nullptr, size_t(64) << 20, 1};
 	rv::Annotations m_ann;
+	rv::ColourManager m_colour; // no config, nothing saved
 	std::atomic<int> m_quits{0};
 	rv::AppContext m_ctx{.m_svc = m_svc,
 	                     .m_caps = m_caps,
 	                     .m_kitty = m_kitty,
 	                     .m_ann = m_ann,
+	                     .m_colour = m_colour,
 	                     .m_redraw = [] {},
 	                     .m_post = [](const std::function<void()>&) {},
 	                     .m_quit = [this] { ++m_quits; },

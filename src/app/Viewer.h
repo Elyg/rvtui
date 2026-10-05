@@ -1,11 +1,14 @@
 #pragma once
 
 #include "app/AppContext.h"
+#include "app/ColourPane.h"
 #include "app/FilesPane.h"
 #include "app/InspectorPane.h"
 #include "app/LayersPane.h"
+#include "app/LineEditor.h"
 #include "app/MetaPane.h"
 #include "app/Player.h"
+#include "app/Sheet.h"
 #include "app/ViewerState.h"
 #include "image/Overlay.h"
 #include "term/ImageView.h"
@@ -17,6 +20,7 @@
 #include <filesystem>
 #include <functional>
 #include <initializer_list>
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -47,10 +51,11 @@ public:
 	{
 		return m_player.playing();
 	}
-	/// An annotation line is being typed (keys are text, not commands).
+	/// An annotation line or a `:` frame number is being typed (keys are
+	/// text, not commands).
 	bool typing() const noexcept
 	{
-		return m_files.annotations().editing();
+		return m_files.annotations().editing() || m_goto.has_value();
 	}
 	/// Commit a line being typed (before the annotations are saved).
 	void finishTyping()
@@ -82,6 +87,31 @@ public:
 	{
 		return m_player;
 	}
+	/// The contact sheet as last drawn, and where it is zoomed / panned.
+	const SheetLayout& sheet() const noexcept
+	{
+		return m_sheet;
+	}
+	const SheetView& sheetView() const noexcept
+	{
+		return m_sheetView;
+	}
+	/// How many tiles are on screen (have a slot).
+	int tilesShown() const noexcept
+	{
+		return static_cast<int>(m_tiles.size());
+	}
+	/// `P`: whether playback renders below the paused resolution (default)
+	/// to keep up, or at full resolution, as fast as it can.
+	bool playbackCapped() const noexcept
+	{
+		return m_playbackCap;
+	}
+	/// Pixels each image slot may send per draw (kitty): the budget split
+	/// between tiles, and less while playing (unless `P` lifted the cap).
+	int pixelCap() const;
+	/// The whole pixel budget while playing with the cap on (tiles share it).
+	int cappedBudget() const;
 
 private:
 	/// `q`: leave the viewer (playback stops).
@@ -89,9 +119,6 @@ private:
 
 	// --- view ---
 	int reduceFor(const ImageInfo& info, const ImageSlot& slot) const;
-	/// Pixels each image slot may send per draw (kitty): the budget split
-	/// between tiles, and less while playing.
-	int pixelCap() const;
 	/// The slot playback decodes for: the first tile, or the main view.
 	const ImageSlot& playbackSlot() const;
 	/// Whether source `i` is on screen (every source when tiled).
@@ -103,18 +130,49 @@ private:
 	/// `f`: fit the image, into the area left of the side panes if open.
 	void fitView(const ImageInfoPtr& info);
 	void setFrame(int f);
+	/// `:`: start typing a frame number (sequences only).
+	void openGoto();
+	/// A key while typing the frame number; Enter goes to it.
+	void gotoEvent(const ftxui::Event& e);
 	void togglePlay();
 	void prefetchFrame(int f);
 	/// Start the slots on frame `f` (decoded already) before it is due.
 	void prepareAhead(int f);
 	/// The pixel under terminal cell (x, y), in the view or a tile.
 	Sample sampleAt(int cellX, int cellY);
+	/// The display settings for frame `path` of source `source`: the shared
+	/// ones, with that image's OCIO transform (when a config is in use).
+	DisplayParams displayFor(int source, const std::filesystem::path& path);
+	/// Zoom (terminal px per image px) `slot` shows its image at; nullopt
+	/// when fitted.
+	std::optional<double> zoomOf(const ImageSlot& slot) const;
+
+	// --- tiles: a contact sheet, zoomed and panned as one image ---
+	/// The tile the HUD and panes describe: the active source (by source) or
+	/// the shown layer.
+	int selectedTile(const ImageInfoPtr& info) const;
+	void selectTile(int i, const ImageInfoPtr& info);
+	/// Zoom the sheet by `factor` about area cell `at` (default: the
+	/// selected tile, which then stays put).
+	void zoomSheet(double factor,
+	               const ImageInfoPtr& info,
+	               std::optional<std::pair<double, double>> at = std::nullopt);
+	/// Pan the sheet by area cells; the tile under the middle gets selected.
+	void panSheet(double dx, double dy, const ImageInfoPtr& info);
+	/// `z` on the sheet: the selected tile's pixels 1:1, centred on it.
+	void sheetOneToOne(const ImageInfoPtr& info);
+	/// Bring tile `i` to the middle (when zoomed in).
+	void centreSheetOn(int i);
+	/// Zoomed in: select the tile under the middle of the area.
+	void followSheetCentre(const ImageInfoPtr& info);
+	/// Enter: the selected tile alone, at the zoom and place it had.
+	void openSelectedTile(const ImageInfoPtr& info);
 
 	// --- panes ---
 	/// Right column: inspector / metadata. Left column: files / layers.
 	bool rightPanelOpen() const noexcept
 	{
-		return m_inspector.isOpen() || m_meta.isOpen();
+		return m_inspector.isOpen() || m_meta.isOpen() || m_colour.isOpen();
 	}
 	bool leftPanelOpen() const noexcept
 	{
@@ -153,6 +211,8 @@ private:
 	ftxui::Element renderHud(const ImageInfoPtr& info);
 	ftxui::Element renderTiles(const ImageInfoPtr& info, int width);
 	ftxui::Element renderStatus(const ImageInfoPtr& info);
+	/// The `:` prompt, in place of the status bar.
+	ftxui::Element renderGoto() const;
 
 	AppContext& m_ctx;
 	std::function<void()> m_onClose;
@@ -160,28 +220,45 @@ private:
 	bool m_tile = false;
 	bool m_tileSelection = true;   ///< dashed highlight on the selected tile
 	bool m_fitBesidePanel = false; ///< `f` with a pane open: keep re-fitting
+	bool m_playbackCap = true;     ///< `P`: lower resolution while playing
 	int m_mouseX = -1, m_mouseY = -1;
+	std::optional<LineEditor> m_goto; ///< `:` frame number being typed
 
 	ImageSlotPtr m_viewSlot;
-	std::vector<ImageSlotPtr> m_tileSlots;
-	/// What each tile shows (parallel to m_tileSlots), for the inspector.
+	/// A tile on screen: its slot and how it shows its image.
+	struct Tile
+	{
+		ImageSlotPtr m_slot;
+		double m_zoom = 0;   ///< terminal px per image px; 0 = fitted
+		ViewParams m_view{}; ///< what it drew last
+	};
+	/// Slots of the tiles on screen only, by tile index: off-screen tiles
+	/// give theirs (and its kitty image id) back.
+	std::map<int, Tile> m_tiles;
+	/// What every tile shows, for the inspector and read-ahead.
 	struct TileRef
 	{
 		std::filesystem::path m_path;
 		std::string m_layer;
 	};
 	std::vector<TileRef> m_tileRefs;
+	SheetLayout m_sheet;
+	SheetView m_sheetView;
+	SheetArea m_sheetArea;
+	std::string m_sheetKey;  ///< what the sheet shows: a change fits it again
+	ftxui::Box m_sheetBox{}; ///< where the sheet was drawn
 
 	MetaPane m_meta;
 	FilesPane m_files;
 	InspectorPane m_inspector;
 	LayersPane m_layers;
+	ColourPane m_colour;
 	ftxui::Box m_sideBox{}; ///< the right column (clicks there skip the image)
 	ftxui::Box m_leftBox{}; ///< the left column
 	struct HiddenPanes
 	{
 		bool m_meta = false, m_files = false, m_inspector = false,
-		     m_layers = false;
+		     m_layers = false, m_colour = false;
 		Focus m_focus = Focus::IMAGE;
 	};
 	std::optional<HiddenPanes> m_hiddenPanes;

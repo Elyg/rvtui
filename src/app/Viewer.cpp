@@ -8,6 +8,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <ctime>
 
@@ -20,25 +21,65 @@ namespace rv
 namespace
 {
 const double FPS_CHOICES[] = {12, 23.976, 24, 25, 30, 48, 60};
+
+// hjkl / arrows pan by a few cells, HJKL by more: (dx, dy) in cells.
+std::optional<std::pair<double, double>> panStep(const Event& e)
+{
+	auto ch = [&](const char* c) { return e == Event::Character(c); };
+	if(ch("h") || e == Event::ArrowLeft)
+	{
+		return std::pair(-4.0, 0.0);
+	}
+	if(ch("l") || e == Event::ArrowRight)
+	{
+		return std::pair(4.0, 0.0);
+	}
+	if(ch("k") || e == Event::ArrowUp)
+	{
+		return std::pair(0.0, -2.0);
+	}
+	if(ch("j") || e == Event::ArrowDown)
+	{
+		return std::pair(0.0, 2.0);
+	}
+	if(ch("H"))
+	{
+		return std::pair(-16.0, 0.0);
+	}
+	if(ch("L"))
+	{
+		return std::pair(16.0, 0.0);
+	}
+	if(ch("K"))
+	{
+		return std::pair(0.0, -8.0);
+	}
+	if(ch("J"))
+	{
+		return std::pair(0.0, 8.0);
+	}
+	return std::nullopt;
+}
 } // namespace
 
 Viewer::Viewer(AppContext& ctx, std::function<void()> onClose)
     : m_ctx(ctx), m_onClose(std::move(onClose)), m_viewSlot(newSlot(ctx)),
       m_meta(m_state, ctx), m_files(m_state, ctx), m_inspector(m_state, ctx),
-      m_layers(m_state), m_player(
-                             [this]
-                             {
-	                             // From the ticker thread. A posted task, so a
-	                             // tick that shows nothing new costs no redraw.
-	                             m_ctx.m_post(
-	                                 [this]
-	                                 {
-		                                 if(tick())
-		                                 {
-			                                 m_ctx.m_redraw();
-		                                 }
-	                                 });
-                             })
+      m_layers(m_state), m_colour(m_state, ctx),
+      m_player(
+          [this]
+          {
+	          // From the ticker thread. A posted task, so a
+	          // tick that shows nothing new costs no redraw.
+	          m_ctx.m_post(
+	              [this]
+	              {
+		              if(tick())
+		              {
+			              m_ctx.m_redraw();
+		              }
+	              });
+          })
 {
 }
 
@@ -58,6 +99,7 @@ void Viewer::open(std::vector<Entry> entries, bool tile)
 	m_state.m_picked.reset();
 	m_fitBesidePanel = false;
 	m_tile = tile;
+	m_sheetKey.clear(); // fit the sheet again
 	m_meta.resetScroll();
 	m_player.reset(); // fps from the file once known
 }
@@ -112,9 +154,38 @@ std::vector<fs::path> Viewer::shownDirs() const
 	return dirs;
 }
 
+DisplayParams Viewer::displayFor(int source, const fs::path& path)
+{
+	DisplayParams disp = m_state.m_disp;
+	if(disp.m_srgb && source >= 0 &&
+	   source < static_cast<int>(m_state.m_sources.size()))
+	{
+		disp.m_ocio =
+		    m_ctx.m_colour.transformFor(path,
+		                                sourceKey(m_state.m_sources[source]));
+	}
+	return disp;
+}
+
+std::optional<double> Viewer::zoomOf(const ImageSlot& slot) const
+{
+	if(&slot == m_viewSlot.get())
+	{
+		return m_state.m_view.m_fit ? std::nullopt
+		                            : std::optional(m_state.m_view.m_zoom);
+	}
+	for(const auto& [i, t] : m_tiles)
+	{
+		if(t.m_slot.get() == &slot && t.m_zoom > 0)
+		{
+			return t.m_zoom;
+		}
+	}
+	return std::nullopt;
+}
+
 int Viewer::reduceFor(const ImageInfo& info, const ImageSlot& slot) const
 {
-	const bool fit = &slot != m_viewSlot.get() || m_state.m_view.m_fit;
 	// While playing, decode up to 25% below the size sent: a 4K plate on a
 	// ~2000 px wide view then caches at 1920 px (33 MB) instead of 4K
 	// (132 MB), and a whole sequence fits in the cache instead of being
@@ -122,42 +193,52 @@ int Viewer::reduceFor(const ImageInfo& info, const ImageSlot& slot) const
 	constexpr double PLAYBACK_SLACK = 1.25;
 	return m_ctx.reduceFor(slot,
 	                       info.fitBounds(m_state.m_layerLabel),
-	                       fit ? std::nullopt
-	                           : std::optional(m_state.m_view.m_zoom),
+	                       zoomOf(slot),
 	                       pixelCap(),
-	                       m_player.playing() ? PLAYBACK_SLACK : 1.0);
+	                       m_player.playing() && m_playbackCap ? PLAYBACK_SLACK
+	                                                           : 1.0);
 }
 
-int Viewer::pixelCap() const
+int Viewer::cappedBudget() const
 {
-	int cap = m_tile
-	              ? TOTAL_PIXEL_BUDGET /
-	                    std::max<int>(1, static_cast<int>(m_tileSlots.size()))
-	              : TOTAL_PIXEL_BUDGET;
-	if(m_player.playing())
+	int cap = TOTAL_PIXEL_BUDGET;
+	if(!m_tile)
 	{
-		if(!m_tile)
-		{
-			cap /= 2;
-		}
-		// Inline transfer (ssh): every pixel crosses the link, compressed
-		// but base64'd; halve it again to keep playback near frame rate.
-		if(m_ctx.m_caps.m_transfer == Transfer::DIRECT)
-		{
-			cap /= 2;
-		}
+		cap /= 2;
+	}
+	// Inline transfer (ssh): every pixel crosses the link, compressed but
+	// base64'd; halve it again to keep playback near frame rate.
+	if(m_ctx.m_caps.m_transfer == Transfer::DIRECT)
+	{
+		cap /= 2;
 	}
 	return cap;
 }
 
+int Viewer::pixelCap() const
+{
+	const int cap = m_player.playing() && m_playbackCap ? cappedBudget()
+	                                                    : TOTAL_PIXEL_BUDGET;
+	// Tiles share the budget: the ones on screen, so zooming into the sheet
+	// makes each sharper.
+	return m_tile ? cap / std::max<int>(1, static_cast<int>(m_tiles.size()))
+	              : cap;
+}
+
 const ImageSlot& Viewer::playbackSlot() const
 {
-	return m_tile && !m_tileSlots.empty() ? *m_tileSlots.front() : *m_viewSlot;
+	return m_tile && !m_tiles.empty() ? *m_tiles.begin()->second.m_slot
+	                                  : *m_viewSlot;
 }
 
 bool Viewer::showsSource(int i) const
 {
-	return (m_tile && m_state.m_sources.size() > 1) || i == m_state.m_current;
+	if(m_tile && m_state.m_sources.size() > 1)
+	{
+		// The tiles on screen (all of them before the first draw).
+		return m_tiles.empty() || m_tiles.contains(i);
+	}
+	return i == m_state.m_current;
 }
 
 // --- actions ---
@@ -255,10 +336,183 @@ void Viewer::pan(double dxCells, double dyCells)
 	    dyCells * m_viewSlot->pxPerCellY() / m_state.m_view.m_zoom;
 }
 
+// --- tiles ---
+
+int Viewer::selectedTile(const ImageInfoPtr& info) const
+{
+	if(m_state.m_sources.size() > 1)
+	{
+		return m_state.m_current;
+	}
+	return info ? std::max(0, info->findLayer(m_state.m_layerLabel)) : 0;
+}
+
+void Viewer::selectTile(int i, const ImageInfoPtr& info)
+{
+	if(m_state.m_sources.size() > 1)
+	{
+		if(i >= 0 && i < static_cast<int>(m_state.m_sources.size()))
+		{
+			m_state.m_current = i;
+		}
+	}
+	else if(info && i >= 0 && i < static_cast<int>(info->m_layers.size()))
+	{
+		m_state.m_layerLabel = info->m_layers[i].label();
+	}
+}
+
+void Viewer::zoomSheet(double factor,
+                       const ImageInfoPtr& info,
+                       std::optional<std::pair<double, double>> at)
+{
+	if(at)
+	{
+		// The wheel: about the mouse; then whatever lands in the middle is
+		// what the panes describe.
+		zoomSheetView(m_sheetView,
+		              m_sheet,
+		              m_sheetArea,
+		              factor,
+		              at->first,
+		              at->second);
+		followSheetCentre(info);
+		return;
+	}
+	// A key: about the selected tile, which stays put and selected.
+	double ax = m_sheetArea.m_w / 2.0, ay = m_sheetArea.m_h / 2.0;
+	if(auto p =
+	       placeTile(m_sheet, m_sheetView, m_sheetArea, selectedTile(info)))
+	{
+		ax = (p->m_boxX0 + p->m_boxX1) / 2.0;
+		ay = (p->m_boxY0 + p->m_boxY1) / 2.0;
+	}
+	zoomSheetView(m_sheetView, m_sheet, m_sheetArea, factor, ax, ay);
+}
+
+void Viewer::panSheet(double dx, double dy, const ImageInfoPtr& info)
+{
+	panSheetView(m_sheetView, m_sheet, m_sheetArea, dx, dy);
+	followSheetCentre(info);
+}
+
+void Viewer::sheetOneToOne(const ImageInfoPtr& info)
+{
+	const int sel = selectedTile(info);
+	if(sel < 0 || sel >= static_cast<int>(m_tileRefs.size()))
+	{
+		return;
+	}
+	const ImageInfoPtr ti = m_ctx.m_svc.info(m_tileRefs[sel].m_path);
+	if(!ti)
+	{
+		return;
+	}
+	// Terminal px per image px of the fitted sheet; zoom until that is 1.
+	const Box2i dw = ti->displayWindow();
+	const double fitted =
+	    std::min(m_sheet.m_tileW * m_viewSlot->pxPerCellX() /
+	                 static_cast<double>(std::max(1, dw.width())),
+	             m_sheet.m_tileH * m_viewSlot->pxPerCellY() /
+	                 static_cast<double>(std::max(1, dw.height())));
+	m_sheetView.m_zoom = 1.0 / std::max(1e-9, fitted);
+	centreSheetOn(sel);
+}
+
+void Viewer::centreSheetOn(int i)
+{
+	if(i < 0 || i >= m_sheet.m_count)
+	{
+		return;
+	}
+	const auto [x, y] = m_sheet.origin(i);
+	m_sheetView.m_cx = x + m_sheet.m_tileW / 2.0;
+	m_sheetView.m_cy = y + m_sheet.m_tileH / 2.0;
+	clampSheetView(m_sheetView, m_sheet, m_sheetArea);
+}
+
+void Viewer::followSheetCentre(const ImageInfoPtr& info)
+{
+	if(m_sheetView.m_zoom <= 1.0)
+	{
+		return; // fitted: the selection stays where it was clicked
+	}
+	const int i = m_sheet.tileAt(m_sheetView.m_cx, m_sheetView.m_cy);
+	if(i >= 0)
+	{
+		selectTile(i, info);
+	}
+}
+
+void Viewer::openSelectedTile(const ImageInfoPtr& info)
+{
+	// Zoomed in, the single view starts at the same zoom on the same place;
+	// a fitted tile opens fitted.
+	auto it = m_tiles.find(selectedTile(info));
+	m_state.m_view = ViewParams{};
+	if(it != m_tiles.end() && it->second.m_zoom > 0)
+	{
+		m_state.m_view = it->second.m_view;
+		m_state.m_view.m_fitFrame = false;
+	}
+	m_fitBesidePanel = false;
+	m_tile = false;
+}
+
 void Viewer::setFrame(int f)
 {
 	int n = m_state.frameCount();
 	m_state.m_frame = ((f % n) + n) % n;
+}
+
+void Viewer::openGoto()
+{
+	if(!m_state.numberedSource())
+	{
+		m_ctx.m_message = "not a sequence";
+		return;
+	}
+	m_goto.emplace();
+}
+
+void Viewer::gotoEvent(const Event& e)
+{
+	if(e.is_character())
+	{
+		// Digits only: anything else would not be a frame number.
+		const std::string& c = e.character();
+		if(c.size() == 1 && std::isdigit(static_cast<unsigned char>(c[0])) &&
+		   m_goto->glyphs().size() < 9)
+		{
+			(void)m_goto->event(e, {});
+		}
+		return;
+	}
+	const auto r = m_goto->event(e, {});
+	if(r == LineEditor::Result::CANCEL)
+	{
+		m_goto.reset();
+		return;
+	}
+	if(r != LineEditor::Result::COMMIT)
+	{
+		return;
+	}
+	const std::string typed = m_goto->text();
+	m_goto.reset();
+	const Source* src = m_state.numberedSource();
+	if(typed.empty() || !src)
+	{
+		return;
+	}
+	const int number = std::stoi(typed);
+	const int idx = src->indexForFrameNumber(number);
+	setFrame(idx);
+	const std::string shown = src->frameLabel(idx);
+	if(shown != std::to_string(number))
+	{
+		m_ctx.m_message = fmt::format("no frame {}: showing {}", number, shown);
+	}
 }
 
 void Viewer::togglePlay()
@@ -326,11 +580,15 @@ void Viewer::prepareAhead(int f)
 		return;
 	}
 	const bool bySource = m_state.m_sources.size() > 1;
-	const size_t n = std::min(m_tileSlots.size(), m_tileRefs.size());
-	for(size_t i = 0; i < n; ++i)
+	for(const auto& [i, t] : m_tiles)
 	{
+		if(i >= static_cast<int>(m_tileRefs.size()) ||
+		   (bySource && i >= static_cast<int>(m_state.m_sources.size())))
+		{
+			continue;
+		}
 		const auto& src = m_state.m_sources[bySource ? i : m_state.m_current];
-		ahead(*m_tileSlots[i], src.frame(f), m_tileRefs[i].m_layer);
+		ahead(*t.m_slot, src.frame(f), m_tileRefs[i].m_layer);
 	}
 }
 
@@ -376,6 +634,17 @@ bool Viewer::tick()
 	if(!next)
 	{
 		return false;
+	}
+	// The frame just left is needed again only a whole loop later: let it
+	// go first when the cache is full (see ImageService::demote).
+	for(int i = 0; i < static_cast<int>(m_state.m_sources.size()); ++i)
+	{
+		if(showsSource(i))
+		{
+			svc.demote(m_state.m_sources[i].frame(m_state.m_frame),
+			           m_state.m_layerLabel,
+			           reduce);
+		}
 	}
 	m_state.m_frame = *next;
 	prepareAhead((*next + 1) % std::max(1, m_state.frameCount()));
@@ -492,7 +761,9 @@ void Viewer::togglePanes()
 		                            m_files.isOpen(),
 		                            m_inspector.isOpen(),
 		                            m_layers.isOpen(),
+		                            m_colour.isOpen(),
 		                            m_state.m_focus};
+		m_colour.setOpen(false);
 		m_meta.setOpen(false);
 		m_files.setOpen(false);
 		m_inspector.setOpen(false);
@@ -505,6 +776,7 @@ void Viewer::togglePanes()
 		m_files.setOpen(m_hiddenPanes->m_files);
 		m_inspector.setOpen(m_hiddenPanes->m_inspector);
 		m_layers.setOpen(m_hiddenPanes->m_layers);
+		m_colour.setOpen(m_hiddenPanes->m_colour);
 		m_state.m_focus = m_hiddenPanes->m_focus;
 		m_hiddenPanes.reset();
 	}
@@ -516,12 +788,18 @@ void Viewer::togglePanes()
 
 bool Viewer::event(Event e)
 {
+	if(m_goto && !e.is_mouse())
+	{
+		gotoEvent(e);
+		return true;
+	}
 	ImageInfoPtr info = m_ctx.m_svc.info(m_state.currentFramePath());
 	Focus& focus = m_state.m_focus;
 	if((focus == Focus::META && !m_meta.isOpen()) ||
 	   (focus == Focus::FILES && !m_files.isOpen()) ||
 	   (focus == Focus::INSPECT && !m_inspector.isOpen()) ||
-	   (focus == Focus::LAYERS && !m_layers.isOpen()))
+	   (focus == Focus::LAYERS && !m_layers.isOpen()) ||
+	   (focus == Focus::COLOUR && !m_colour.isOpen()))
 	{
 		focus = Focus::IMAGE;
 	}
@@ -546,7 +824,11 @@ bool Viewer::event(Event e)
 	if((focus == Focus::META && m_meta.event(e, info)) ||
 	   (focus == Focus::FILES && m_files.event(e)) ||
 	   (focus == Focus::INSPECT && m_inspector.event(e)) ||
-	   (focus == Focus::LAYERS && m_layers.event(e, info)))
+	   (focus == Focus::LAYERS && m_layers.event(e, info)) ||
+	   (focus == Focus::COLOUR &&
+	    m_colour.event(e,
+	                   m_state.currentFramePath(),
+	                   sourceKey(m_state.m_sources[m_state.m_current]))))
 	{
 		return true;
 	}
@@ -591,11 +873,19 @@ bool Viewer::mouseEvent(Event e, const ImageInfoPtr& info)
 	}
 	if(wheel)
 	{
-		if(m_tile || overSide)
+		if(overSide)
 		{
 			return true;
 		}
 		double f = m.button == Mouse::WheelUp ? 1.25 : 1.0 / 1.25;
+		if(m_tile)
+		{
+			zoomSheet(f,
+			          info,
+			          std::pair(m.x - m_sheetBox.x_min + 0.5,
+			                    m.y - m_sheetBox.y_min + 0.5));
+			return true;
+		}
 		zoomBy(f, m_viewSlot->imageCoordAt(m.x, m.y));
 		return true;
 	}
@@ -623,6 +913,10 @@ bool Viewer::mouseEvent(Event e, const ImageInfoPtr& info)
 		{
 			m_state.m_focus = Focus::INSPECT;
 		}
+		else if(m_colour.isOpen() && m_colour.contains(m.x, m.y))
+		{
+			m_state.m_focus = Focus::COLOUR;
+		}
 		else if(m_layers.isOpen() && m_layers.contains(m.x, m.y))
 		{
 			m_layers.click(m.y, info);
@@ -633,21 +927,13 @@ bool Viewer::mouseEvent(Event e, const ImageInfoPtr& info)
 	// A click on a tile selects it (Enter opens it).
 	if(m_tile && !pick)
 	{
-		for(size_t i = 0; i < m_tileSlots.size(); ++i)
+		for(const auto& [i, t] : m_tiles)
 		{
-			if(!inside(m_tileSlots[i]->box(), m.x, m.y))
+			if(inside(t.m_slot->box(), m.x, m.y))
 			{
-				continue;
+				selectTile(i, info);
+				break;
 			}
-			if(m_state.m_sources.size() > 1)
-			{
-				m_state.m_current = static_cast<int>(i);
-			}
-			else if(info && i < info->m_layers.size())
-			{
-				m_state.m_layerLabel = info->m_layers[i].label();
-			}
-			break;
 		}
 	}
 	Sample s = pick ? sampleAt(m.x, m.y) : Sample{};
@@ -669,7 +955,7 @@ bool Viewer::keyEvent(const Event& e, const ImageInfoPtr& info)
 	}
 	else if(m_tile && e == Event::Return)
 	{
-		m_tile = false; // open the selected tile
+		openSelectedTile(info);
 	}
 	else if(ch("q") || e == Event::Escape || e == Event::Backspace)
 	{
@@ -682,24 +968,22 @@ bool Viewer::keyEvent(const Event& e, const ImageInfoPtr& info)
 			close();
 		}
 	}
-	else if(ch("]"))
+	else if(ch("]") || ch("[") || ch("n") || ch("N"))
 	{
-		cycleLayer(info, 1);
-	}
-	else if(ch("["))
-	{
-		cycleLayer(info, -1);
-	}
-	else if(ch("n"))
-	{
-		m_state.m_current = (m_state.m_current + 1) %
-		                    static_cast<int>(m_state.m_sources.size());
-	}
-	else if(ch("N"))
-	{
-		m_state.m_current = (m_state.m_current - 1 +
-		                     static_cast<int>(m_state.m_sources.size())) %
-		                    static_cast<int>(m_state.m_sources.size());
+		if(ch("]") || ch("["))
+		{
+			cycleLayer(info, ch("]") ? 1 : -1);
+		}
+		else
+		{
+			const int n = static_cast<int>(m_state.m_sources.size());
+			m_state.m_current =
+			    (m_state.m_current + (ch("n") ? 1 : -1) + n) % n;
+		}
+		if(m_tile && m_sheetView.m_zoom > 1.0)
+		{
+			centreSheetOn(selectedTile(info)); // keep the selection in view
+		}
 	}
 	else if(ch("c"))
 	{
@@ -802,54 +1086,51 @@ bool Viewer::keyEvent(const Event& e, const ImageInfoPtr& info)
 	{
 		m_state.m_disp = DisplayParams{};
 	}
-	else if(ch("+") || ch("="))
+	else if(ch("+") || ch("=") || ch("-") || ch("_"))
 	{
-		zoomBy(1.25);
-	}
-	else if(ch("-") || ch("_"))
-	{
-		zoomBy(1.0 / 1.25);
+		const double f = ch("+") || ch("=") ? 1.25 : 1.0 / 1.25;
+		if(m_tile)
+		{
+			zoomSheet(f, info);
+		}
+		else
+		{
+			zoomBy(f);
+		}
 	}
 	else if(ch("f"))
 	{
-		fitView(info);
+		if(m_tile)
+		{
+			m_sheetView = fitSheetView(m_sheet, m_sheetArea);
+		}
+		else
+		{
+			fitView(info);
+		}
 	}
 	else if(ch("z"))
 	{
-		zoomBy(1.0);
-		m_state.m_view.m_zoom = 1.0;
+		if(m_tile)
+		{
+			sheetOneToOne(info);
+		}
+		else
+		{
+			zoomBy(1.0);
+			m_state.m_view.m_zoom = 1.0;
+		}
 	}
-	else if(ch("h") || e == Event::ArrowLeft)
+	else if(auto step = panStep(e))
 	{
-		pan(-4, 0);
-	}
-	else if(ch("l") || e == Event::ArrowRight)
-	{
-		pan(4, 0);
-	}
-	else if(ch("k") || e == Event::ArrowUp)
-	{
-		pan(0, -2);
-	}
-	else if(ch("j") || e == Event::ArrowDown)
-	{
-		pan(0, 2);
-	}
-	else if(ch("H"))
-	{
-		pan(-16, 0);
-	}
-	else if(ch("L"))
-	{
-		pan(16, 0);
-	}
-	else if(ch("K"))
-	{
-		pan(0, -8);
-	}
-	else if(ch("J"))
-	{
-		pan(0, 8);
+		if(m_tile)
+		{
+			panSheet(step->first, step->second, info);
+		}
+		else
+		{
+			pan(step->first, step->second);
+		}
 	}
 	else if(ch(" "))
 	{
@@ -871,6 +1152,22 @@ bool Viewer::keyEvent(const Event& e, const ImageInfoPtr& info)
 	{
 		setFrame(m_state.frameCount() - 1);
 	}
+	else if(ch(":"))
+	{
+		openGoto();
+	}
+	else if(ch("P"))
+	{
+		m_playbackCap = !m_playbackCap;
+		// Tiles on this machine keep the pixels: only the decode is softer.
+		m_ctx.m_message =
+		    !m_playbackCap ? std::string("playback: full res")
+		    : cappedBudget() < TOTAL_PIXEL_BUDGET
+		        ? fmt::format("playback: capped at {:g} Mpx (full {:g})",
+		                      cappedBudget() / 1e6,
+		                      TOTAL_PIXEL_BUDGET / 1e6)
+		        : std::string("playback: capped (softer decode)");
+	}
 	else if(ch("F"))
 	{
 		const double cur =
@@ -889,6 +1186,7 @@ bool Viewer::keyEvent(const Event& e, const ImageInfoPtr& info)
 	else if(ch("t"))
 	{
 		m_tile = !m_tile;
+		m_sheetKey.clear(); // a fresh sheet starts fitted
 	}
 	else if(ch("1"))
 	{
@@ -913,6 +1211,10 @@ bool Viewer::keyEvent(const Event& e, const ImageInfoPtr& info)
 	else if(ch("3"))
 	{
 		m_files.show();
+	}
+	else if(ch("6"))
+	{
+		m_colour.show();
 	}
 	else if(e == Event::Tab)
 	{
@@ -1009,7 +1311,11 @@ Element Viewer::renderHud(const ImageInfoPtr& info)
 	{
 		disp += fmt::format(" γ{:.1f}", m_state.m_disp.m_gamma);
 	}
-	if(m_state.m_disp.m_srgb != defaults.m_srgb)
+	if(m_ctx.m_colour.active() && m_state.m_disp.m_srgb)
+	{
+		disp += " " + m_ctx.m_colour.view(); // the OCIO view in use
+	}
+	else if(m_state.m_disp.m_srgb != defaults.m_srgb)
 	{
 		disp += m_state.m_disp.m_srgb ? " sRGB" : " raw";
 	}
@@ -1017,11 +1323,18 @@ Element Viewer::renderHud(const ImageInfoPtr& info)
 	{
 		parts.push_back(text(disp + " ") | color(Color::Yellow));
 	}
-	parts.push_back(
-	    text(m_state.m_view.m_fit
-	             ? " 🔍 fit "
-	             : fmt::format(" 🔍 {:.0f}% ", m_state.m_view.m_zoom * 100)) |
-	    dim);
+	std::string zoom =
+	    m_state.m_view.m_fit
+	        ? " 🔍 fit "
+	        : fmt::format(" 🔍 {:.0f}% ", m_state.m_view.m_zoom * 100);
+	if(m_tile)
+	{
+		// The sheet's zoom, against fitted.
+		zoom = m_sheetView.m_zoom <= 1.0
+		           ? " 🔍 fit "
+		           : fmt::format(" 🔍 ×{:.1f} ", m_sheetView.m_zoom);
+	}
+	parts.push_back(text(zoom) | dim);
 	if(m_state.m_picked)
 	{
 		parts.push_back(text(" ██ ") |
@@ -1055,15 +1368,18 @@ Sample Viewer::sampleAt(int cellX, int cellY)
 	const ImageSlot* slot = nullptr;
 	fs::path path;
 	std::string layer;
+	int source = m_state.m_current;
 	if(m_tile)
 	{
-		for(size_t i = 0; i < m_tileSlots.size() && i < m_tileRefs.size(); ++i)
+		for(const auto& [i, t] : m_tiles)
 		{
-			if(m_tileSlots[i]->imageCoordAt(cellX, cellY))
+			if(i < static_cast<int>(m_tileRefs.size()) &&
+			   t.m_slot->imageCoordAt(cellX, cellY))
 			{
-				slot = m_tileSlots[i].get();
+				slot = t.m_slot.get();
 				path = m_tileRefs[i].m_path;
 				layer = m_tileRefs[i].m_layer;
+				source = m_state.m_sources.size() > 1 ? i : source;
 				break;
 			}
 		}
@@ -1114,11 +1430,10 @@ Sample Viewer::sampleAt(int cellX, int cellY)
 	out.m_rgba[2] = lb;
 	out.m_hasAlpha = cm.m_a >= 0;
 	out.m_rgba[3] = out.m_hasAlpha ? get(cm.m_a) : 1.0f;
-	auto d8 = [&](float f)
-	{ return static_cast<int>(applyDisplay(f, m_state.m_disp) * 255 + 0.5f); };
-	out.m_r = d8(lr);
-	out.m_g = d8(lg);
-	out.m_b = d8(lb);
+	const auto rgb8 = displayRgb8(lr, lg, lb, displayFor(source, path));
+	out.m_r = rgb8[0];
+	out.m_g = rgb8[1];
+	out.m_b = rgb8[2];
 	out.m_luma = 0.2126f * lr + 0.7152f * lg + 0.0722f * lb;
 	out.m_state = Sample::State::OK;
 	return out;
@@ -1126,151 +1441,166 @@ Sample Viewer::sampleAt(int cellX, int cellY)
 
 Element Viewer::renderTiles(const ImageInfoPtr& info, int width)
 {
-	bool bySource = m_state.m_sources.size() > 1;
-	int n = bySource ? static_cast<int>(m_state.m_sources.size())
-	                 : (info ? static_cast<int>(info->m_layers.size()) : 0);
+	const bool bySource = m_state.m_sources.size() > 1;
+	const int n = bySource
+	                  ? static_cast<int>(m_state.m_sources.size())
+	                  : (info ? static_cast<int>(info->m_layers.size()) : 0);
 	if(n == 0)
 	{
+		m_tiles.clear();
 		return text("");
 	}
-	while(static_cast<int>(m_tileSlots.size()) < n)
-	{
-		m_tileSlots.push_back(newSlot(m_ctx));
-	}
-	if(static_cast<int>(m_tileSlots.size()) > n)
-	{
-		m_tileSlots.resize(n);
-	}
 
-	// Contact-sheet layout: every tile is sized to the image's aspect (so
-	// neighbours nearly touch), filled left to right then down, and the
-	// whole block is centred. No captions: the HUD names the selected one.
+	// Contact sheet: one tile per source (or per layer), each sized to the
+	// image's aspect so neighbours nearly touch, filled left to right then
+	// down. No captions: the HUD names the selected one. The sheet zooms and
+	// pans as one image; only the tiles on screen are drawn.
 	const auto dims = Terminal::Size();
-	const int areaW = std::max(1, width);
-	const int areaH = std::max(1, dims.dimy - 2); // minus HUD + status
+	const SheetArea area{std::max(1, width),
+	                     std::max(1, dims.dimy - 2)}; // minus HUD + status
 	const double pxX = m_viewSlot->pxPerCellX(), pxY = m_viewSlot->pxPerCellY();
-	// Tiles frame the display window only. Every tile's frame size: one per
-	// source (they may differ), or the same frame for all layers.
+	// What each tile shows, and its frame (display window: tiles frame that
+	// only) size.
+	m_tileRefs.resize(n);
+	std::vector<ImageInfoPtr> infos(n);
 	std::vector<std::pair<double, double>> frames(n);
+	std::string key =
+	    bySource ? std::string("sources")
+	             : "layers " + sourceKey(m_state.m_sources[m_state.m_current]);
 	for(int i = 0; i < n; ++i)
 	{
-		ImageInfoPtr ti =
-		    bySource
-		        ? m_ctx.m_svc.info(m_state.m_sources[i].frame(m_state.m_frame))
-		        : info;
-		const Box2i b = (ti ? ti : info)->displayWindow();
+		if(bySource)
+		{
+			m_tileRefs[i] = {m_state.m_sources[i].frame(m_state.m_frame),
+			                 m_state.m_layerLabel};
+			infos[i] = m_ctx.m_svc.info(m_tileRefs[i].m_path);
+			key += "|" + sourceKey(m_state.m_sources[i]);
+		}
+		else
+		{
+			m_tileRefs[i] = {m_state.currentFramePath(),
+			                 info->m_layers[i].label()};
+			infos[i] = info;
+			key += "|" + m_tileRefs[i].m_layer;
+		}
+		const Box2i b = (infos[i] ? infos[i] : info)->displayWindow();
 		frames[i] = {std::max(1, b.width()), std::max(1, b.height())};
 	}
-	// Pick the column count that shows the most image overall, then shrink
-	// the shared tile box to the largest image actually drawn in it. It
-	// depends on every image, not the selected one, so it stays put.
-	int cols = 1;
-	double bestArea = -1;
-	for(int c = 1; c <= n; ++c)
+	m_sheet =
+	    layoutSheet(frames, area.m_w, area.m_h, pxX, pxY, MAX_VISIBLE_TILES);
+	m_sheetArea = area;
+	if(key != m_sheetKey)
 	{
-		const int r = (n + c - 1) / c;
-		const double boxW = areaW * pxX / c, boxH = areaH * pxY / r;
-		double area = 0;
-		for(const auto& [w, h] : frames)
-		{
-			const double sc = std::min(boxW / w, boxH / h);
-			area += sc * w * sc * h;
-		}
-		if(area > bestArea * 1.0001) // ties: fewer columns
-		{
-			bestArea = area;
-			cols = c;
-		}
+		m_sheetKey = key; // other tiles: start over, fitted
+		m_sheetView = fitSheetView(m_sheet, area);
 	}
-	const int rows = (n + cols - 1) / cols;
-	const double boxW = areaW * pxX / cols, boxH = areaH * pxY / rows;
-	double usedW = 1, usedH = 1;
-	for(const auto& [w, h] : frames)
+	else
 	{
-		const double sc = std::min(boxW / w, boxH / h);
-		usedW = std::max(usedW, sc * w);
-		usedH = std::max(usedH, sc * h);
+		clampSheetView(m_sheetView, m_sheet, area); // resized, headers in
 	}
-	const int tileW =
-	    std::clamp(static_cast<int>(usedW / pxX), 1, areaW / cols);
-	const int tileH =
-	    std::clamp(static_cast<int>(usedH / pxY), 1, areaH / rows);
 
-	m_tileRefs.resize(n);
-	Elements gridRows;
-	for(int r = 0; r < rows; ++r)
+	// The tiles on screen keep (or get) a slot; the rest give theirs back.
+	std::vector<std::pair<int, TilePlacement>> visible;
+	for(int i = 0; i < n; ++i)
 	{
-		Elements rowEls;
-		for(int c = 0; c < cols && r * cols + c < n; ++c)
+		if(auto p = placeTile(m_sheet, m_sheetView, area, i))
 		{
-			const int i = r * cols + c;
-			auto& slot = m_tileSlots[i];
-			slot->setMaxPixels(pixelCap());
-			fs::path path;
-			std::string layer = m_state.m_layerLabel;
-			bool selected; // the tile the HUD and panes describe
-			if(bySource)
-			{
-				path = m_state.m_sources[i].frame(m_state.m_frame);
-				selected = i == m_state.m_current;
-			}
-			else
-			{
-				path = m_state.currentFramePath();
-				layer = info->m_layers[i].label();
-				selected =
-				    i == std::max(0, info->findLayer(m_state.m_layerLabel));
-			}
-			m_tileRefs[i] = {path, layer};
-			const ImageInfoPtr ti = m_ctx.m_svc.info(path);
-			LayerImagePtr li =
-			    ti ? m_ctx.m_svc.layerBestEffort(path,
-			                                     layer,
-			                                     reduceFor(*ti, *slot))
-			       : nullptr;
-			if(!li)
-			{
-				// Still decoding: keep the tile's last picture up, as the
-				// single view does (see render()).
-				li = slot->shown();
-			}
-			Element img = text("…") | dim | center;
-			if(li)
-			{
-				ViewParams frameFit;
-				frameFit.m_fitFrame = true;
-				// A contact sheet shows the frame outline at most.
-				DisplayParams disp = m_state.m_disp;
-				if(disp.m_outlines == Outlines::FRAME_AND_DATA)
-				{
-					disp.m_outlines = Outlines::FRAME;
-				}
-				disp.m_selected = selected && n > 1 && m_tileSelection;
-				const int src = bySource ? i : m_state.m_current;
-				img = slot->element(
-				    li,
-				    frameFit,
-				    disp,
-				    overlayText({m_state.sourceAnnotations(m_ctx.m_ann, src)},
-				                keyLookup(src, path, ti, layer)));
-			}
-			rowEls.push_back(img | size(WIDTH, EQUAL, tileW) |
-			                 size(HEIGHT, EQUAL, tileH));
+			visible.emplace_back(i, *p);
 		}
-		gridRows.push_back(hbox(std::move(rowEls)));
 	}
-	// Global lines once over the whole sheet (the union of the tile frames),
-	// resolved against the selected tile.
-	const int sel = bySource
-	                    ? m_state.m_current
-	                    : std::max(0, info->findLayer(m_state.m_layerLabel));
+	std::map<int, Tile> kept;
+	for(const auto& [i, p] : visible)
+	{
+		auto it = m_tiles.find(i);
+		kept.emplace(i,
+		             it != m_tiles.end() ? std::move(it->second)
+		                                 : Tile{newSlot(m_ctx)});
+	}
+	m_tiles = std::move(kept);
+
+	const int sel = selectedTile(info);
+	Elements children;
+	std::vector<Box> boxes;
+	for(const auto& [i, p] : visible)
+	{
+		Tile& t = m_tiles.at(i);
+		ImageSlot& slot = *t.m_slot;
+		slot.setMaxPixels(pixelCap());
+		const TileRef& ref = m_tileRefs[i];
+		const ImageInfoPtr& ti = infos[i];
+		// All of it on a fitted sheet: fit, as ever. Otherwise the zoom
+		// that fits the frame in the whole tile, centred on where the
+		// visible part's middle falls.
+		ViewParams view;
+		view.m_fitFrame = true;
+		t.m_zoom = 0;
+		const bool whole = m_sheetView.m_zoom <= 1.0 &&
+		                   p.m_boxX0 == std::lround(p.m_x0) &&
+		                   p.m_boxX1 == std::lround(p.m_x1) &&
+		                   p.m_boxY0 == std::lround(p.m_y0) &&
+		                   p.m_boxY1 == std::lround(p.m_y1);
+		if(!whole && ti)
+		{
+			const Box2i dw = ti->displayWindow();
+			const double k =
+			    std::min((p.m_x1 - p.m_x0) * pxX / std::max(1, dw.width()),
+			             (p.m_y1 - p.m_y0) * pxY / std::max(1, dw.height()));
+			const double dx =
+			    (p.m_boxX0 + p.m_boxX1 - p.m_x0 - p.m_x1) / 2.0 * pxX / k;
+			const double dy =
+			    (p.m_boxY0 + p.m_boxY1 - p.m_y0 - p.m_y1) / 2.0 * pxY / k;
+			view.m_fit = false;
+			view.m_zoom = k;
+			view.m_centerX = dw.m_x0 + dw.width() / 2.0 + dx;
+			view.m_centerY = dw.m_y0 + dw.height() / 2.0 + dy;
+			t.m_zoom = k;
+		}
+		t.m_view = view;
+		LayerImagePtr li =
+		    ti ? m_ctx.m_svc.layerBestEffort(ref.m_path,
+		                                     ref.m_layer,
+		                                     reduceFor(*ti, slot))
+		       : nullptr;
+		if(!li)
+		{
+			// Still decoding: keep the tile's last picture up, as the
+			// single view does (see render()).
+			li = slot.shown();
+		}
+		Element img = text("…") | dim | center;
+		if(li)
+		{
+			// A contact sheet shows the frame outline at most.
+			const int src = bySource ? i : m_state.m_current;
+			DisplayParams disp = displayFor(src, ref.m_path);
+			if(disp.m_outlines == Outlines::FRAME_AND_DATA)
+			{
+				disp.m_outlines = Outlines::FRAME;
+			}
+			disp.m_selected = i == sel && n > 1 && m_tileSelection;
+			img = slot.element(
+			    li,
+			    view,
+			    disp,
+			    overlayText({m_state.sourceAnnotations(m_ctx.m_ann, src)},
+			                keyLookup(src, ref.m_path, ti, ref.m_layer)));
+		}
+		children.push_back(img);
+		boxes.push_back(
+		    Box{p.m_boxX0, p.m_boxX1 - 1, p.m_boxY0, p.m_boxY1 - 1});
+	}
+	Element grid = placeAt(std::move(children), std::move(boxes)) |
+	               size(WIDTH, EQUAL, area.m_w) |
+	               size(HEIGHT, EQUAL, area.m_h) | reflect(m_sheetBox);
+
+	// Global lines once over the whole sheet (the union of the tile frames
+	// on screen), resolved against the selected tile.
 	const TileRef& selRef = m_tileRefs[std::clamp(sel, 0, n - 1)];
 	OverlayText sheet = overlayText({&m_ctx.m_ann.global()},
 	                                keyLookup(m_state.m_current,
 	                                          selRef.m_path,
 	                                          m_ctx.m_svc.info(selRef.m_path),
 	                                          selRef.m_layer));
-	Element grid = vbox(std::move(gridRows));
 	if(!overlayEmpty(sheet))
 	{
 		grid = drawAfter(
@@ -1278,19 +1608,16 @@ Element Viewer::renderTiles(const ImageInfoPtr& info, int width)
 		    [this, sheet = std::move(sheet)](Screen& screen)
 		    {
 			    std::optional<ImageSlot::CellRect> u;
-			    Box clip{};
-			    for(const auto& t : m_tileSlots)
+			    for(const auto& [i, t] : m_tiles)
 			    {
-				    auto f = t->frameCells();
+				    auto f = t.m_slot->frameCells();
 				    if(!f)
 				    {
 					    continue;
 				    }
-				    const Box b = t->box();
 				    if(!u)
 				    {
 					    u = f;
-					    clip = b;
 					    continue;
 				    }
 				    const int x1 = std::max(u->m_x + u->m_w, f->m_x + f->m_w);
@@ -1299,7 +1626,6 @@ Element Viewer::renderTiles(const ImageInfoPtr& info, int width)
 				    u->m_y = std::min(u->m_y, f->m_y);
 				    u->m_w = x1 - u->m_x;
 				    u->m_h = y1 - u->m_y;
-				    clip = Box::Union(clip, b);
 			    }
 			    if(!u)
 			    {
@@ -1307,14 +1633,14 @@ Element Viewer::renderTiles(const ImageInfoPtr& info, int width)
 			    }
 			    paintOverlay(
 			        screen,
-			        clip,
+			        m_sheetBox,
 			        layoutOverlay(u->m_x, u->m_y, u->m_w, u->m_h, sheet),
 			        [this](int x,
 			               int y) -> std::optional<std::array<uint8_t, 3>>
 			        {
-				        for(const auto& t : m_tileSlots)
+				        for(const auto& [i, t] : m_tiles)
 				        {
-					        if(auto c = t->cellColor(x, y))
+					        if(auto c = t.m_slot->cellColor(x, y))
 					        {
 						        return c;
 					        }
@@ -1323,7 +1649,7 @@ Element Viewer::renderTiles(const ImageInfoPtr& info, int width)
 			        });
 		    });
 	}
-	return grid | center;
+	return grid;
 }
 
 Element Viewer::render()
@@ -1390,7 +1716,7 @@ Element Viewer::render()
 		    img ? m_viewSlot->element(
 		              img,
 		              m_state.m_view,
-		              m_state.m_disp,
+		              displayFor(m_state.m_current, path),
 		              overlayText({&m_ctx.m_ann.global(),
 		                           m_state.sourceAnnotations(m_ctx.m_ann,
 		                                                     m_state.m_current)},
@@ -1448,12 +1774,19 @@ Element Viewer::render()
 			add(m_inspector.render(info ? sampleAt(m_mouseX, m_mouseY)
 			                            : Sample{}));
 		}
+		if(m_colour.isOpen())
+		{
+			add(m_colour.render(path,
+			                    sourceKey(
+			                        m_state.m_sources[m_state.m_current])));
+		}
 		if(m_meta.isOpen())
 		{
 			add(m_meta.render(info) | flex);
 		}
-		const bool rightFocused =
-		    m_state.m_focus == Focus::META || m_state.m_focus == Focus::INSPECT;
+		const bool rightFocused = m_state.m_focus == Focus::META ||
+		                          m_state.m_focus == Focus::INSPECT ||
+		                          m_state.m_focus == Focus::COLOUR;
 		rightCol =
 		    hbox({separator() | (rightFocused ? color(Color::Green) : nothing),
 		          vbox(std::move(side)) |
@@ -1488,10 +1821,41 @@ Element Viewer::render()
 		}
 		body = dbox({body, hbox(std::move(over))});
 	}
-	return vbox(
-	    {renderHud(info),
-	     body | flex,
-	     typing() ? m_files.annotations().renderInput() : renderStatus(info)});
+	return vbox({renderHud(info),
+	             body | flex,
+	             m_goto     ? renderGoto()
+	             : typing() ? m_files.annotations().renderInput()
+	                        : renderStatus(info)});
+}
+
+Element Viewer::renderGoto() const
+{
+	// Like the annotation input line: the prompt, the digits with a block
+	// cursor, then the sequence's range and the keys while they fit.
+	const auto& g = m_goto->glyphs();
+	const int cur = m_goto->cursor();
+	std::string before, after;
+	for(int k = 0; k < cur; ++k)
+	{
+		before += g[k];
+	}
+	for(int k = cur + 1; k < static_cast<int>(g.size()); ++k)
+	{
+		after += g[k];
+	}
+	const Source* src = m_state.numberedSource();
+	const std::string hints =
+	    fmt::format("  {}  Enter go  Esc cancel ",
+	                src ? src->m_entry.rangeString() : std::string());
+	return hbox({
+	           text(" frame › ") | color(Color::Yellow) | bold,
+	           text(before),
+	           text(cur < static_cast<int>(g.size()) ? g[cur] : " ") | inverted,
+	           text(after),
+	           filler(),
+	           text(hints) | dim,
+	       }) |
+	       bgcolor(Color::GrayDark);
 }
 
 Element Viewer::renderStatus(const ImageInfoPtr& info)
@@ -1504,12 +1868,13 @@ Element Viewer::renderStatus(const ImageInfoPtr& info)
 	}
 	else if(m_tile)
 	{
-		right = "click select  Enter open  ? help  q untile";
+		right = "wheel zoom  click select  Enter open  ? help  q untile";
 	}
 	else
 	{
-		right = "2 meta  3 files  4 inspect  5 layers  t tile  ? help  q exit "
-		        "viewer";
+		right =
+		    "2 meta  3 files  4 inspect  5 layers  6 colour  t tile  ? help  "
+		    "q exit viewer";
 	}
 	if(m_state.m_sources.size() > 1 && !m_inspector.isOpen())
 	{
@@ -1538,6 +1903,10 @@ Element Viewer::renderStatus(const ImageInfoPtr& info)
 		                                          target)
 		                            : fmt::format(" ⏸ {:.3g}fps ", target)) |
 		                   (m_player.playing() ? color(Color::Green) : dim));
+		if(!m_playbackCap)
+		{
+			playback.push_back(text("full res ") | color(Color::Yellow));
+		}
 		cache = fmt::format("cache {}/{}",
 		                    humanSize(m_ctx.m_svc.bytesUsed()),
 		                    humanSize(m_ctx.m_svc.budget()));

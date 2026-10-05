@@ -14,8 +14,13 @@ class RvtuiConan(ConanFile):
         # Same range as openexr, so both resolve to one libdeflate.
         self.requires("libdeflate/[>=1.19 <2]")
         self.requires("cli11/2.6.0")
+        self.requires("opencolorio/2.5.2")
         self.requires("gtest/1.17.0")
 
     def configure(self):
         self.options["*"].shared = False
         self.options["*"].fPIC = True
+        # OCIO reads .ocioz archives through minizip-ng: zlib is all it needs
+        # (no openssl, nor the other codecs).
+        for opt in ("bzip2", "lzma", "zstd", "openssl", "iconv", "libbsd", "libcomp"):
+            setattr(self.options["minizip-ng"], "with_" + opt, False)

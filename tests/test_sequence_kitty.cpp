@@ -79,9 +79,10 @@ TEST(Kitty, TransmitChunks)
 	opt.m_rows = 5;
 	opt.m_chunk = 1024;
 	std::string s = rv::kitty::transmit(img, opt);
-	EXPECT_EQ(s.rfind("\x1b_Ga=T,f=32,o=z,q=2,s=64,v=64,i=42,U=1,c=10,r=5,m=1;",
-	                  0),
-	          0u);
+	EXPECT_EQ(
+	    s.rfind("\x1b_Ga=T,f=32,o=z,q=2,s=64,v=64,i=42,U=1,p=1,c=10,r=5,m=1;",
+	            0),
+	    0u);
 	// Every chunk terminated; last chunk has m=0.
 	EXPECT_NE(s.find("\x1b_Gm=0;"), std::string::npos);
 	EXPECT_EQ(s.substr(s.size() - 2), "\x1b\\");
@@ -189,6 +190,23 @@ TEST(Sequence, EntriesForArgs)
 		EXPECT_EQ(seq[0].m_kind, rv::Entry::Kind::SEQUENCE);
 		EXPECT_EQ(seq[0].m_frames.size(), 3u);
 	}
+
+	// A lone # takes any padding; ## and up are exact.
+	auto [lone, m4] = run({d + "shot.#.exr"});
+	ASSERT_EQ(lone.size(), 1u);
+	EXPECT_EQ(lone[0].m_frames.size(), 3u);
+	auto [exact, m5] = run({d + "shot.##.exr"});
+	EXPECT_TRUE(exact.empty());
+	EXPECT_EQ(m5.size(), 1u);
+	for(const char* n : {"plate.1.exr", "plate.2.exr", "plate.10.exr"})
+	{
+		std::ofstream(dir / n) << "x";
+	}
+	std::ofstream(dir / "plate.final.exr") << "x"; // not a frame
+	auto [unpadded, m6] = run({d + "plate.#.exr"});
+	ASSERT_EQ(unpadded.size(), 1u);
+	EXPECT_EQ(unpadded[0].m_frames.size(), 3u);
+	EXPECT_EQ(unpadded[0].m_frameNumbers, (std::vector<int>{1, 2, 10}));
 
 	// What the shell passes for an unquoted glob: grouped the same way.
 	auto [expanded, m2] =

@@ -143,4 +143,142 @@ std::string paneTitle(std::string_view head, int width)
 	return title;
 }
 
+namespace
+{
+
+// The glyphs of `s` with their display width (the empty second cell FTXUI
+// gives a wide glyph is dropped).
+std::vector<std::pair<std::string, int>> sizedGlyphs(std::string_view s)
+{
+	std::vector<std::pair<std::string, int>> out;
+	for(auto& g : Utf8ToGlyphs(std::string(s)))
+	{
+		if(!g.empty())
+		{
+			const int w = std::max(1, string_width(g));
+			out.emplace_back(std::move(g), w);
+		}
+	}
+	return out;
+}
+
+int totalWidth(const std::vector<std::pair<std::string, int>>& glyphs)
+{
+	int w = 0;
+	for(const auto& g : glyphs)
+	{
+		w += g.second;
+	}
+	return w;
+}
+
+} // namespace
+
+std::string ellipsizeEnd(std::string_view s, int width)
+{
+	const auto glyphs = sizedGlyphs(s);
+	if(totalWidth(glyphs) <= width)
+	{
+		return std::string(s);
+	}
+	if(width <= 0)
+	{
+		return "";
+	}
+	std::string out;
+	int used = 0;
+	for(const auto& [g, w] : glyphs)
+	{
+		if(used + w > width - 1)
+		{
+			break;
+		}
+		out += g;
+		used += w;
+	}
+	return out + "…";
+}
+
+std::string ellipsizeStart(std::string_view s, int width)
+{
+	const auto glyphs = sizedGlyphs(s);
+	if(totalWidth(glyphs) <= width)
+	{
+		return std::string(s);
+	}
+	if(width <= 0)
+	{
+		return "";
+	}
+	std::string tail;
+	int used = 0;
+	for(auto it = glyphs.rbegin(); it != glyphs.rend(); ++it)
+	{
+		if(used + it->second > width - 1)
+		{
+			break;
+		}
+		tail.insert(0, it->first);
+		used += it->second;
+	}
+	return "…" + tail;
+}
+
+std::string ellipsizeMiddle(std::string_view s, int width)
+{
+	const auto glyphs = sizedGlyphs(s);
+	if(totalWidth(glyphs) <= width)
+	{
+		return std::string(s);
+	}
+	if(width <= 0)
+	{
+		return "";
+	}
+	// The head gets the odd cell: "shaders.cam…anLeft".
+	const int room = width - 1;
+	const int headRoom = (room + 1) / 2, tailRoom = room / 2;
+	std::string head;
+	int used = 0;
+	for(const auto& [g, w] : glyphs)
+	{
+		if(used + w > headRoom)
+		{
+			break;
+		}
+		head += g;
+		used += w;
+	}
+	std::string tail;
+	used = 0;
+	for(auto it = glyphs.rbegin(); it != glyphs.rend(); ++it)
+	{
+		if(used + it->second > tailRoom)
+		{
+			break;
+		}
+		tail.insert(0, it->first);
+		used += it->second;
+	}
+	return head + "…" + tail;
+}
+
+std::vector<std::string> wrapWidth(std::string_view s, int width)
+{
+	width = std::max(1, width);
+	std::vector<std::string> lines(1);
+	int used = 0;
+	for(const auto& [g, w] : sizedGlyphs(s))
+	{
+		if(used + w > width && used > 0)
+		{
+			lines.emplace_back();
+			used = 0;
+		}
+		lines.back() += g;
+		used += w;
+	}
+	return lines;
+}
+
 } // namespace rv::ui

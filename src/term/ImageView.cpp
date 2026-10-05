@@ -82,6 +82,44 @@ private:
 	std::function<void(ftxui::Screen&)> m_after;
 };
 
+class PlaceNode : public ftxui::Node
+{
+public:
+	PlaceNode(ftxui::Elements children, std::vector<ftxui::Box> boxes)
+	    : ftxui::Node(std::move(children)), m_boxes(std::move(boxes))
+	{
+	}
+
+	void ComputeRequirement() override
+	{
+		for(auto& c : children_)
+		{
+			c->ComputeRequirement();
+		}
+		requirement_ = {};
+		requirement_.min_x = 1;
+		requirement_.min_y = 1;
+		requirement_.flex_grow_x = requirement_.flex_grow_y = 1;
+		requirement_.flex_shrink_x = requirement_.flex_shrink_y = 1;
+	}
+
+	void SetBox(ftxui::Box box) override
+	{
+		ftxui::Node::SetBox(box);
+		for(size_t i = 0; i < children_.size() && i < m_boxes.size(); ++i)
+		{
+			const ftxui::Box& b = m_boxes[i];
+			children_[i]->SetBox({box.x_min + b.x_min,
+			                      box.x_min + b.x_max,
+			                      box.y_min + b.y_min,
+			                      box.y_min + b.y_max});
+		}
+	}
+
+private:
+	std::vector<ftxui::Box> m_boxes;
+};
+
 // Per cell, the average RGB of `bmp` laid over cols x rows cells.
 std::vector<uint8_t> cellColors(const Rgba8Image& bmp, int cols, int rows)
 {
@@ -166,6 +204,11 @@ ftxui::Element drawAfter(ftxui::Element child,
                          std::function<void(ftxui::Screen&)> after)
 {
 	return std::make_shared<AfterNode>(std::move(child), std::move(after));
+}
+
+ftxui::Element placeAt(ftxui::Elements children, std::vector<ftxui::Box> boxes)
+{
+	return std::make_shared<PlaceNode>(std::move(children), std::move(boxes));
 }
 
 void compactPlaceholders(ftxui::Screen& screen)
@@ -371,8 +414,15 @@ void ImageSlot::apply(Prepared p)
 {
 	if(p.m_key.m_mode == GraphicsMode::KITTY)
 	{
-		// Replaces the picture under m_id. Written ahead of the frame FTXUI
-		// is about to print (same stream).
+		// Replaces the picture under m_id (and, by its placement id, the
+		// placement). A new size in cells (tiles zoomed, a fold, a resize):
+		// drop the old placement first, in case a terminal keeps it.
+		// Written ahead of the frame FTXUI is about to print (same stream).
+		if(m_transmitted &&
+		   (p.m_key.m_cols != m_cols || p.m_key.m_rows != m_rows))
+		{
+			m_tx.write(kitty::deletePlacements(m_id, m_tx.tmux()));
+		}
 		m_tx.write(p.m_escapes);
 		m_transmitted = true;
 	}

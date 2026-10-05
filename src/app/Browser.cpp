@@ -1,5 +1,6 @@
 #include "app/Browser.h"
 
+#include "app/ViewerState.h"
 #include "image/Loader.h"
 #include "util/Fuzzy.h"
 #include "util/Ui.h"
@@ -878,9 +879,11 @@ Element Browser::renderPreview()
 	                                      layers)) |
 	                color(Color::Cyan));
 
-	Element image =
-	    img ? m_previewSlot->element(img, ViewParams{}, DisplayParams{})
-	        : text("decoding…") | dim | center | flex;
+	// The viewer's colour management (OCIO view), at default exposure.
+	DisplayParams disp;
+	disp.m_ocio = m_ctx.m_colour.transformFor(p, sourceKey(Source{*e}));
+	Element image = img ? m_previewSlot->element(img, ViewParams{}, disp)
+	                    : text("decoding…") | dim | center | flex;
 	return vbox({image | flex, separatorLight(), vbox(std::move(lines))});
 }
 

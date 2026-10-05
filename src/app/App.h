@@ -13,6 +13,7 @@
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -31,6 +32,8 @@ struct AppOptions
 	/// Write chosen paths here on `o` and exit (nvim integration).
 	std::string m_chooserFile;
 	std::string m_cwdFile; ///< write the last directory here on exit
+	/// Decoded-image cache budget.
+	std::uint64_t m_cacheBytes = ImageService::DEFAULT_BUDGET;
 };
 
 /// Run the TUI until quit; returns the exit code.
@@ -73,6 +76,7 @@ private:
 	ImageService m_svc;
 	Annotations m_ann;
 	std::filesystem::path m_annPath; ///< state file (empty = not saved)
+	ColourManager m_colour;
 	AppContext m_ctx;
 	Mode m_mode = Mode::BROWSER;
 	bool m_help = false;

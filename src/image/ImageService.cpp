@@ -207,6 +207,21 @@ bool ImageService::hasLayer(const std::filesystem::path& p,
 	       0;
 }
 
+void ImageService::demote(const std::filesystem::path& p,
+                          const std::string& label,
+                          int reduce)
+{
+	std::lock_guard lk(m_mu);
+	auto it =
+	    m_cache.find(layerKey(identLocked(p), label, std::max(1, reduce)));
+	if(it != m_cache.end())
+	{
+		m_lru.splice(m_lru.end(),
+		             m_lru,
+		             it->second.m_lru); // back: evicted first
+	}
+}
+
 std::optional<std::string> ImageService::error(const std::filesystem::path& p)
 {
 	std::lock_guard lk(m_mu);

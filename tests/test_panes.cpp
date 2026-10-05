@@ -1,12 +1,18 @@
 #include "TestContext.h"
+#include "app/ColourPane.h"
 #include "app/FilesPane.h"
 #include "app/InspectorPane.h"
 #include "app/LayersPane.h"
 #include "app/MetaPane.h"
 #include "app/ViewerState.h"
 
+#include <ftxui/dom/node.hpp>
+#include <ftxui/screen/screen.hpp>
+#include <ftxui/screen/string.hpp>
+#include <ftxui/screen/terminal.hpp>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -211,6 +217,244 @@ TEST_F(Panes, MetaPassesOnViewerKeysAndClosesOnItsNumber)
 	p.scroll(3);
 }
 
+namespace
+{
+
+// A 160-column terminal (a 48-cell side pane) while it lives; ctest's output
+// is a pipe, so FTXUI uses the fallback size.
+struct WideTerminal
+{
+	WideTerminal()
+	{
+		ftxui::Terminal::SetFallbackSize({160, 40});
+	}
+	~WideTerminal()
+	{
+		ftxui::Terminal::SetFallbackSize({80, 24});
+	}
+};
+
+// A header whose names and values do not fit the pane.
+ImageInfoPtr longInfo(const std::string& path)
+{
+	auto i = std::make_shared<ImageInfo>();
+	PartInfo part;
+	part.m_displayWindow = {0, 0, 7, 3};
+	part.m_dataWindow = part.m_displayWindow;
+	part.m_attributes = {{"screenWindowCenter", "v2f", "[0, 0]"},
+	                     {"shaders.camera.overscanLeft", "int", "0"},
+	                     {"shaders.camera.overscanRight", "int", "1"},
+	                     {"freaki.scenePath", "string", path},
+	                     {"tiles", "tiledesc", "32x32 one level"}};
+	i->m_parts.push_back(part);
+	LayerInfo l;
+	l.m_channels = {"R"};
+	i->m_layers.push_back(l);
+	return i;
+}
+
+// The pane drawn as many times as `draws` (its scroll uses the last layout),
+// one string per screen row, trailing spaces off.
+std::vector<std::string> drawMeta(MetaPane& p,
+                                  const ImageInfoPtr& info,
+                                  int height = 30)
+{
+	ftxui::Screen screen(sidePanelWidth(), height);
+	ftxui::Render(screen, p.render(info));
+	ftxui::Render(screen, p.render(info)); // with m_box from the first
+	std::vector<std::string> rows;
+	for(int y = 0; y < height; ++y)
+	{
+		std::string row;
+		for(int x = 0; x < screen.dimx(); ++x)
+		{
+			const std::string& c = screen.PixelAt(x, y).character;
+			row += c.empty() ? " " : c;
+		}
+		while(!row.empty() && row.back() == ' ')
+		{
+			row.pop_back();
+		}
+		rows.push_back(row);
+	}
+	return rows;
+}
+
+const std::string* rowStarting(const std::vector<std::string>& rows,
+                               const std::string& prefix)
+{
+	for(const auto& r : rows)
+	{
+		if(r.starts_with(prefix))
+		{
+			return &r;
+		}
+	}
+	return nullptr;
+}
+
+std::string longPath()
+{
+	std::string path = "/job/rendering/people/etitas/devboxes/g";
+	while(path.size() < 150)
+	{
+		path += "/deeper";
+	}
+	return path + "/render.ass";
+}
+
+} // namespace
+
+TEST_F(Panes, MetaNamesAndValuesKeepTheirColumns)
+{
+	WideTerminal wide;
+	MetaPane p(m_state, m_c.m_ctx);
+	const auto rows = drawMeta(p, longInfo(longPath()));
+	// A name that fits keeps a gap before its value.
+	const std::string* centre = rowStarting(rows, "  screenWindowCenter ");
+	ASSERT_NE(centre, nullptr);
+	EXPECT_TRUE(centre->ends_with(" [0, 0]")) << *centre;
+	// A long value no longer squeezes its name; it is cut at the end.
+	const std::string* path = rowStarting(rows, "  freaki.scenePath ");
+	ASSERT_NE(path, nullptr);
+	EXPECT_TRUE(path->ends_with("…")) << *path;
+	// Long names are cut in the middle, so they stay apart.
+	int overscan = 0;
+	for(const auto& r : rows)
+	{
+		overscan += r.starts_with("  shaders.") && r.find("…") != r.npos;
+	}
+	EXPECT_EQ(overscan, 2);
+	for(const auto& r : rows)
+	{
+		EXPECT_LE(ftxui::string_width(r), sidePanelWidth()) << r;
+	}
+}
+
+TEST_F(Panes, MetaCursorRowShowsTheWholeValue)
+{
+	WideTerminal wide;
+	MetaPane p(m_state, m_c.m_ctx);
+	p.setOpen(true);
+	m_state.m_focus = Focus::META;
+	const std::string path = longPath();
+	const auto i = longInfo(path);
+	// title, path, part, then the attributes: freaki.scenePath is the 4th.
+	for(int k = 0; k < 6; ++k)
+	{
+		EXPECT_TRUE(p.event(key("j"), i));
+	}
+	const auto rows = drawMeta(p, i);
+	auto at = std::ranges::find_if(rows,
+	                               [](const std::string& r)
+	                               { return r.starts_with("  freaki."); });
+	ASSERT_NE(at, rows.end());
+	// The value runs on under its column until it is all there.
+	const size_t col = at->find("/job");
+	ASSERT_NE(col, std::string::npos);
+	// Continuation lines: blank up to the value column.
+	std::string value = at->substr(col);
+	for(auto r = at + 1;
+	    r != rows.end() && r->size() > col && r->find_first_not_of(' ') == col;
+	    ++r)
+	{
+		value += r->substr(col);
+	}
+	EXPECT_EQ(value, path);
+	EXPECT_EQ(rowStarting(rows, "  tiles")->find("…"), std::string::npos);
+}
+
+TEST_F(Panes, MetaScrollsToShowTheWholeCursorRow)
+{
+	WideTerminal wide;
+	MetaPane p(m_state, m_c.m_ctx);
+	p.setOpen(true);
+	m_state.m_focus = Focus::META;
+	const auto i = longInfo(longPath());
+	for(int k = 0; k < 6; ++k)
+	{
+		EXPECT_TRUE(p.event(key("j"), i));
+	}
+	// Ten rows: the title, the footer and eight lines for the items. The
+	// path's last line must be on screen.
+	const auto rows = drawMeta(p, i, 10);
+	EXPECT_TRUE(std::ranges::any_of(rows,
+	                                [](const std::string& r)
+	                                { return r.ends_with("/render.ass"); }));
+}
+
+// --- colour ---
+
+TEST_F(Panes, ColourWithoutAConfigOnlyOffersConfigs)
+{
+	ColourPane p(m_state, m_c.m_ctx);
+	int current = -1;
+	EXPECT_TRUE(p.values(ColourPane::Row::DISPLAY, "/shots/a.exr", "a", current)
+	                .empty());
+	const auto configs =
+	    p.values(ColourPane::Row::CONFIG, "/shots/a.exr", "a", current);
+	ASSERT_FALSE(configs.empty());
+	EXPECT_EQ(configs[current], "none (sRGB)");
+}
+
+TEST_F(Panes, ColourStepsAndPicksViewsAndInputs)
+{
+	ASSERT_TRUE(m_c.m_colour.useConfig(ColourManager::STUDIO))
+	    << m_c.m_colour.error();
+	ColourPane p(m_state, m_c.m_ctx);
+	p.show();
+	EXPECT_EQ(m_state.m_focus, Focus::COLOUR);
+	const fs::path path = "/shots/a.exr";
+	auto press = [&](const Event& e) { return p.event(e, path, "a"); };
+
+	// h/l on the view row steps through the display's views.
+	const auto views = m_c.m_colour.views();
+	ASSERT_GT(views.size(), 1u);
+	EXPECT_TRUE(press(key("j")));
+	EXPECT_TRUE(press(key("j")));
+	ASSERT_EQ(p.cursor(), static_cast<int>(ColourPane::Row::VIEW));
+	const std::string before = m_c.m_colour.view();
+	EXPECT_TRUE(press(key("l")));
+	EXPECT_NE(m_c.m_colour.view(), before);
+	EXPECT_TRUE(press(key("h")));
+	EXPECT_EQ(m_c.m_colour.view(), before);
+
+	// Enter lists them; typing filters; Enter picks the match.
+	const std::string target =
+	    views.back() == before ? views.front() : views.back();
+	EXPECT_TRUE(press(Event::Return));
+	EXPECT_TRUE(p.picking());
+	for(char c : target)
+	{
+		EXPECT_TRUE(press(key(std::string(1, c))));
+	}
+	EXPECT_TRUE(press(Event::Return));
+	EXPECT_FALSE(p.picking());
+	EXPECT_EQ(m_c.m_colour.view(), target);
+
+	// The input row: a colour space overrides the file rules; the first
+	// entry goes back to them.
+	EXPECT_TRUE(press(key("j")));
+	EXPECT_TRUE(press(key("j")));
+	ASSERT_EQ(p.cursor(), static_cast<int>(ColourPane::Row::INPUT));
+	p.choose(ColourPane::Row::INPUT, 1, path, "a");
+	EXPECT_TRUE(m_c.m_colour.overridden("a"));
+	EXPECT_EQ(m_c.m_colour.inputFor(path, "a"),
+	          m_c.m_colour.colourSpaces().front());
+	p.choose(ColourPane::Row::INPUT, 0, path, "a");
+	EXPECT_FALSE(m_c.m_colour.overridden("a"));
+
+	// Esc leaves a list without picking; other keys reach the viewer; its
+	// number closes it.
+	EXPECT_TRUE(press(Event::Return));
+	EXPECT_TRUE(press(Event::Escape));
+	EXPECT_FALSE(p.picking());
+	EXPECT_FALSE(press(key("e")));
+	EXPECT_TRUE(press(key("6")));
+	EXPECT_FALSE(p.isOpen());
+	EXPECT_EQ(m_state.m_focus, Focus::IMAGE);
+}
+
 // --- layers ---
 
 TEST_F(Panes, LayersCursorShowsTheLayerItIsOn)
@@ -326,7 +570,7 @@ TEST_F(Panes, FilesSequenceTooLongToExpand)
 	p.show();
 	EXPECT_TRUE(p.event(key("e")));
 	EXPECT_EQ(m_state.m_sources.size(), 1u);
-	EXPECT_EQ(m_c.m_ctx.m_message, "101 frames: expands up to 100");
+	EXPECT_EQ(m_c.m_ctx.m_message, "501 frames: expands up to 500");
 }
 
 TEST_F(Panes, FilesIntoAnnotationsAndBack)

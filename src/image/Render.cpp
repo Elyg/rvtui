@@ -1,5 +1,6 @@
 #include "image/Render.h"
 
+#include "image/Colour.h"
 #include "util/Parallel.h"
 
 #include <algorithm>
@@ -75,6 +76,30 @@ float applyDisplay(float v, const DisplayParams& p)
 		v = std::pow(v, 1.0f / p.m_gamma);
 	}
 	return std::min(v, 1.0f);
+}
+
+std::array<int, 3> displayRgb8(float r, float g, float b, const DisplayParams& p)
+{
+	auto to8 = [](float v) { return static_cast<int>(v * 255 + 0.5f); };
+	if(p.m_ocio && p.m_srgb)
+	{
+		const float gain = std::exp2(p.m_exposure);
+		auto finite = [&](float v)
+		{ return std::isfinite(v) ? v * gain : 0.0f; };
+		r = finite(r);
+		g = finite(g);
+		b = finite(b);
+		p.m_ocio->apply(r, g, b);
+		DisplayParams gamma; // gamma only, on display values
+		gamma.m_srgb = false;
+		gamma.m_gamma = p.m_gamma;
+		return {to8(applyDisplay(r, gamma)),
+		        to8(applyDisplay(g, gamma)),
+		        to8(applyDisplay(b, gamma))};
+	}
+	return {to8(applyDisplay(r, p)),
+	        to8(applyDisplay(g, p)),
+	        to8(applyDisplay(b, p))};
 }
 
 namespace
@@ -309,6 +334,18 @@ Rgba8Image renderLayer(const LayerImage& img,
 	                            img.m_height);
 
 	DisplayParams lutParams = disp;
+	lutParams.m_ocio.reset(); // the table keys on the scalar settings only
+	// OCIO maps colours, not channels: exposure, then its 3D LUT, then the
+	// table does gamma alone.
+	const ColourTransform* ocio =
+	    disp.m_srgb && disp.m_mode != ChannelMode::ALPHA ? disp.m_ocio.get()
+	                                                     : nullptr;
+	const float gain = std::exp2(disp.m_exposure);
+	if(ocio)
+	{
+		lutParams.m_exposure = 0.0f;
+		lutParams.m_srgb = false;
+	}
 	if(disp.m_mode == ChannelMode::ALPHA)
 	{
 		lutParams = DisplayParams{};
@@ -415,6 +452,13 @@ Rgba8Image renderLayer(const LayerImage& img,
 							        0.2126f * lr + 0.7152f * lg + 0.0722f * lb;
 							    break;
 						    }
+					    }
+					    if(ocio)
+					    {
+						    r *= gain;
+						    g *= gain;
+						    b *= gain;
+						    ocio->apply(r, g, b);
 					    }
 					    uint8_t* px = dst + static_cast<size_t>(ox) * 4;
 					    px[0] = lut(r);

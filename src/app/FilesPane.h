@@ -19,8 +19,9 @@ namespace rv
 class FilesPane
 {
 public:
-	/// `e` expands a sequence into at most this many sources.
-	static constexpr int MAX_EXPAND_FRAMES = 100;
+	/// `e` expands a sequence into at most this many sources (tiles: the
+	/// sheet shows ~180 at a time, see MAX_VISIBLE_TILES).
+	static constexpr int MAX_EXPAND_FRAMES = 500;
 
 	FilesPane(ViewerState& state, AppContext& ctx);
 
