@@ -1,4 +1,5 @@
 #include "TestContext.h"
+#include "app/Sheet.h"
 #include "app/Viewer.h"
 #include "image/Sequence.h"
 
@@ -67,6 +68,16 @@ struct ViewerTest : ::testing::Test
 		    });
 		return i;
 	}
+	// Draw a tiled sheet until every tile's decode has landed (tiles of
+	// layers ask for each layer, not the selected one draw() waits for).
+	void drawSheet()
+	{
+		ASSERT_TRUE(info());
+		ftxui::Screen screen(80, 24);
+		ftxui::Render(screen, m_v.render());
+		ASSERT_TRUE(waitFor([&] { return m_c.m_svc.pendingJobs() == 0; }));
+		ftxui::Render(screen, m_v.render());
+	}
 	// Draw until the image itself is on screen (decoded and laid out).
 	void draw()
 	{
@@ -87,8 +98,8 @@ TEST_F(ViewerTest, OpenStartsFromTheFirstFrameFittedAndUntiled)
 	m_v.open({sequenceEntry()});
 	draw();
 	press(key("."));
-	press(key("t"));
 	press(key("+"));
+	press(key("t"));
 	EXPECT_EQ(state().m_frame, 1);
 	EXPECT_TRUE(m_v.tiled());
 	EXPECT_FALSE(state().m_view.m_fit);
@@ -103,6 +114,72 @@ TEST_F(ViewerTest, OpenStartsFromTheFirstFrameFittedAndUntiled)
 
 	m_v.open({layersEntry()}, true);
 	EXPECT_TRUE(m_v.tiled());
+}
+
+TEST_F(ViewerTest, TileSheetZoomsPansAndOpensWhereItWas)
+{
+	m_v.open({layersEntry()}, true); // a tile per layer: rgba, diffuse, spec
+	drawSheet();
+	ASSERT_EQ(m_v.sheet().m_count, 3);
+	EXPECT_EQ(m_v.tilesShown(), 3);
+	EXPECT_EQ(m_v.sheetView().m_zoom, 1.0);
+	press(key("+"));
+	EXPECT_GT(m_v.sheetView().m_zoom, 1.0);
+	press(key("f"));
+	EXPECT_EQ(m_v.sheetView().m_zoom, 1.0);
+	// The wheel zooms the sheet too (it did nothing on tiles before).
+	ftxui::Mouse wheel;
+	wheel.button = ftxui::Mouse::WheelUp;
+	wheel.motion = ftxui::Mouse::Pressed;
+	wheel.x = 40;
+	wheel.y = 12;
+	press(Event::Mouse("", wheel));
+	EXPECT_GT(m_v.sheetView().m_zoom, 1.0);
+	press(key("f"));
+
+	// Zoomed in on the selected tile, panning selects what is in the middle.
+	const std::string first = state().m_layerLabel;
+	for(int i = 0; i < 8; ++i)
+	{
+		press(key("+"));
+	}
+	drawSheet();
+	EXPECT_EQ(state().m_layerLabel, first); // keys zoom about the selection
+	EXPECT_LT(m_v.tilesShown(), 3);         // the others are off screen
+	for(int i = 0; i < 20 && state().m_layerLabel == first; ++i)
+	{
+		press(key("L"));
+	}
+	EXPECT_NE(state().m_layerLabel, first);
+
+	// Enter opens it at the zoom it had on the sheet.
+	drawSheet();
+	press(Event::Return);
+	EXPECT_FALSE(m_v.tiled());
+	EXPECT_FALSE(state().m_view.m_fit);
+	EXPECT_GT(state().m_view.m_zoom, 0.0);
+
+	// Back to tiles: a fresh, fitted sheet.
+	press(key("t"));
+	drawSheet();
+	EXPECT_EQ(m_v.sheetView().m_zoom, 1.0);
+}
+
+TEST_F(ViewerTest, FoldingAnExpandedSequenceLaysTheSheetOutAfresh)
+{
+	// The sequence and an image, tiled beside the files pane.
+	m_v.open({sequenceEntry(), layersEntry()}, true);
+	press(key("3"));
+	draw();
+	const SheetLayout fresh = m_v.sheet();
+	ASSERT_EQ(fresh.m_count, 2);
+	press(key("e")); // the sequence's 3 frames: 4 tiles
+	draw();
+	EXPECT_EQ(m_v.sheet().m_count, 4);
+	press(key("e")); // fold them back
+	draw();
+	EXPECT_EQ(m_v.sheet(), fresh);
+	EXPECT_EQ(m_v.tilesShown(), 2);
 }
 
 TEST_F(ViewerTest, LayersCycleBothWaysAndWrap)
@@ -141,6 +218,73 @@ TEST_F(ViewerTest, FrameSteppingWrapsRound)
 	press(key(" "));
 	EXPECT_EQ(m_c.m_ctx.m_message, "not a sequence");
 	EXPECT_FALSE(m_v.playing());
+}
+
+TEST_F(ViewerTest, ColonGoesToAFrameNumberOrTheNearest)
+{
+	for(int n : {1001, 1002, 1005})
+	{
+		writeExr(m_dir / ("gap." + std::to_string(n) + ".exr"), {"R"});
+	}
+	m_v.open({entryForPath(m_dir / "gap.1001.exr")});
+	auto go = [&](const std::string& digits)
+	{
+		press(key(":"));
+		EXPECT_TRUE(m_v.typing());
+		for(char c : digits)
+		{
+			press(key(std::string(1, c)));
+		}
+		press(Event::Return);
+		EXPECT_FALSE(m_v.typing());
+	};
+	go("1005");
+	EXPECT_EQ(state().m_frame, 2);
+	EXPECT_EQ(m_c.m_ctx.m_message, "");
+	go("1004"); // a gap: the nearest
+	EXPECT_EQ(state().m_frame, 2);
+	EXPECT_EQ(m_c.m_ctx.m_message, "no frame 1004: showing 1005");
+	go("1003"); // a tie: the earlier
+	EXPECT_EQ(state().m_frame, 1);
+	go("9999"); // past the end: the last
+	EXPECT_EQ(state().m_frame, 2);
+	go("1"); // before the start: the first
+	EXPECT_EQ(state().m_frame, 0);
+
+	// Letters are not typed (nor run as commands); Esc leaves it as it was.
+	press(key(":"));
+	press(key("q"));
+	press(key("1"));
+	press(Event::Escape);
+	EXPECT_FALSE(m_v.typing());
+	EXPECT_EQ(state().m_frame, 0);
+	EXPECT_EQ(m_closed, 0);
+	go(""); // nothing typed: nothing happens
+	EXPECT_EQ(state().m_frame, 0);
+
+	m_v.open({layersEntry()});
+	press(key(":"));
+	EXPECT_FALSE(m_v.typing());
+	EXPECT_EQ(m_c.m_ctx.m_message, "not a sequence");
+}
+
+TEST_F(ViewerTest, PLiftsThePlaybackResolutionCap)
+{
+	m_v.open({sequenceEntry()});
+	ASSERT_EQ(m_c.m_caps.m_transfer, Transfer::DIRECT); // as over ssh
+	EXPECT_EQ(m_v.pixelCap(), TOTAL_PIXEL_BUDGET);
+	press(key(" "));
+	ASSERT_TRUE(m_v.playing());
+	// Half for playing, half again for the inline transfer.
+	EXPECT_EQ(m_v.pixelCap(), TOTAL_PIXEL_BUDGET / 4);
+	press(key("P"));
+	EXPECT_FALSE(m_v.playbackCapped());
+	EXPECT_EQ(m_v.pixelCap(), TOTAL_PIXEL_BUDGET);
+	EXPECT_EQ(m_c.m_ctx.m_message, "playback: full res");
+	press(key("P"));
+	EXPECT_EQ(m_v.pixelCap(), TOTAL_PIXEL_BUDGET / 4);
+	EXPECT_EQ(m_c.m_ctx.m_message, "playback: capped at 1 Mpx (full 4)");
+	press(key(" "));
 }
 
 TEST_F(ViewerTest, ZoomStepsBy125PercentAndPanMovesByCells)
@@ -196,6 +340,37 @@ TEST_F(ViewerTest, RightClickPicksAPixelUntilReopened)
 	    << m_c.m_ctx.m_message;
 	m_v.open({layersEntry()});
 	EXPECT_FALSE(state().m_picked);
+}
+
+TEST_F(ViewerTest, OcioViewChangesWhatIsShownAndSGoesRaw)
+{
+	m_v.open({layersEntry()}); // every channel 0.5
+	draw();
+	auto pickRed = [&]
+	{
+		ftxui::Mouse m;
+		m.button = ftxui::Mouse::Right;
+		m.motion = ftxui::Mouse::Pressed;
+		m.x = 40;
+		m.y = 12;
+		EXPECT_TRUE(waitFor(
+		    [&]
+		    {
+			    return m_v.event(Event::Mouse("", m)) && state().m_picked &&
+			           state().m_picked->m_exact;
+		    }));
+		return state().m_picked ? state().m_picked->m_r : -1;
+	};
+	EXPECT_EQ(pickRed(), 188); // sRGB of 0.5
+	ASSERT_TRUE(m_c.m_colour.useConfig(ColourManager::STUDIO))
+	    << m_c.m_colour.error();
+	const int ocio = pickRed();
+	EXPECT_NE(ocio, 188); // the config's view, tone mapped
+	EXPECT_GT(ocio, 0);
+	press(key("s"));
+	EXPECT_EQ(pickRed(), 128); // raw
+	press(key("6"));
+	EXPECT_EQ(state().m_focus, Focus::COLOUR);
 }
 
 TEST_F(ViewerTest, NextAndPreviousImageWrap)

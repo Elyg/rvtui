@@ -29,12 +29,15 @@ App::App(const AppOptions& opts, ScreenInteractive& screen)
     : m_opts(opts), m_screen(screen),
       m_caps(detectCaps(opts.m_graphics, opts.m_transfer)),
       m_kitty(m_caps.m_tmux, m_caps.m_transfer, &term::writeRaw),
-      m_svc([this] { m_screen.PostEvent(Event::Custom); }),
+      m_svc([this] { m_screen.PostEvent(Event::Custom); },
+            static_cast<size_t>(opts.m_cacheBytes)),
       m_annPath(Annotations::defaultStatePath()),
+      m_colour(ColourManager::defaultStatePath()),
       m_ctx{.m_svc = m_svc,
             .m_caps = m_caps,
             .m_kitty = m_kitty,
             .m_ann = m_ann,
+            .m_colour = m_colour,
             .m_redraw = [this] { m_screen.PostEvent(Event::Custom); },
             .m_post = [this](std::function<void()> task)
             { m_screen.Post(std::move(task)); },
@@ -69,6 +72,11 @@ App::App(const AppOptions& opts, ScreenInteractive& screen)
 	if(!m_annPath.empty() && m_ann.load(m_annPath))
 	{
 		spdlog::info("annotations loaded from {}", m_annPath.string());
+	}
+	m_colour.loadDefault(); // $OCIO, else the config picked last time
+	if(!m_colour.error().empty())
+	{
+		m_ctx.m_message = "OCIO: " + m_colour.error();
 	}
 
 	std::error_code ec;
@@ -214,6 +222,7 @@ Element App::renderHelp()
 		    row("f / z", "fit / 1:1"),
 		    row("hjkl ←↓↑→ HJKL", "pan (shift = faster)"),
 		    row("t", "tile: all layers, or all marked images"),
+		    row("  +- wheel hjkl", "tile: zoom / pan the sheet (f fit, z 1:1)"),
 		    row("click", "select tile / focus pane"),
 		    row("Enter (tile)", "open the selected tile"),
 		    row("Ctrl+click", "pick colour (right click works too)"),
@@ -221,14 +230,16 @@ Element App::renderHelp()
 		    section("Sequence"),
 		    row("space", "play / pause"),
 		    row(", .  < >", "step frame / first, last"),
+		    row(":", "go to frame (file number, nearest)"),
 		    row("F", "cycle playback fps"),
+		    row("P", "playback: capped resolution (keeps up) / full res"),
 		});
 		Element right = vbox({
 		    section("Display"),
 		    row("c r g b a u", "colour / R / G / B / alpha / luma"),
 		    row("e / E", "exposure -/+ 0.5 stop"),
 		    row("y / Y", "gamma -/+ 0.1"),
-		    row("s", "toggle sRGB view transform"),
+		    row("s", "view transform (sRGB / OCIO view) / raw"),
 		    row("w", "outlines (off): frame + data (dashed) / frame / off"),
 		    row("w (tile)", "selection / frame + selection / frame / off"),
 		    row("0", "reset exposure, gamma, channel"),
@@ -236,7 +247,7 @@ Element App::renderHelp()
 		    row("A", "show / hide annotations"),
 		    text(""),
 		    section("Panes"),
-		    row("2 3 4 5", "metadata / files / inspector / layers:"),
+		    row("2 3 4 5 6", "metadata / files / inspector / layers / colour:"),
 		    row("m o i /", "the same, as letters"),
 		    row("", "open + focus; again while focused closes"),
 		    row("1", "focus the image"),
@@ -244,7 +255,7 @@ Element App::renderHelp()
 		    row("  j k  y  Y", "inspector: move, copy line / value"),
 		    row("  wheel { }", "metadata: scroll"),
 		    row("  J / K  x", "files: move down / up, drop"),
-		    row("  e", "files: sequence ⇄ its frames (up to 100)"),
+		    row("  e", "files: sequence ⇄ its frames (up to 500)"),
 		    row("  l / h", "files: into a row's annotations / back"),
 		    row("  D D", "files: clear all annotations (in a row: its own)"),
 		    row("  o O Enter x",
@@ -252,6 +263,7 @@ Element App::renderHelp()
 		    row("  J / K  g / s", "annotations: reorder, to global / source"),
 		    row("  Tab ↑↓ C-n", "typing: next slot, history, [#key] / [#@key]"),
 		    row("  j k gg G", "metadata: move (Ctrl-d/u half page)"),
+		    row("  h/l  Enter", "colour: change the row / pick from a list"),
 		    row("  v  y  Y", "select lines / copy line / copy value"),
 		    text(""),
 		    row("q / Esc", "back to browser"),

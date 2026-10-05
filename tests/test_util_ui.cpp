@@ -158,3 +158,43 @@ TEST(Ui, StatusLineWarningStaysAfterTheStatus)
 	         30);
 	EXPECT_TRUE(row.starts_with(" frame 1  ⚠ no tmux ")) << row;
 }
+
+TEST(Ui, EllipsizeEndKeepsWhatFitsAndCutsTheRest)
+{
+	EXPECT_EQ(ui::ellipsizeEnd("2.63.0", 10), "2.63.0");
+	EXPECT_EQ(ui::ellipsizeEnd("/job/rendering/people", 8), "/job/re…");
+	EXPECT_EQ(ui::ellipsizeEnd("abc", 1), "…");
+	EXPECT_EQ(ui::ellipsizeEnd("abc", 0), "");
+	// By width: a two-cell glyph that would straddle the cut goes whole.
+	EXPECT_EQ(ui::ellipsizeEnd("日本語", 4), "日…");
+}
+
+TEST(Ui, EllipsizeStartKeepsTheTail)
+{
+	EXPECT_EQ(ui::ellipsizeStart("/a/b.exr", 10), "/a/b.exr");
+	EXPECT_EQ(ui::ellipsizeStart("/job/shot/render.ass", 11), "…render.ass");
+	EXPECT_EQ(ui::ellipsizeStart("/日本語", 4), "…語");
+}
+
+TEST(Ui, EllipsizeMiddleKeepsBothEnds)
+{
+	EXPECT_EQ(ui::ellipsizeMiddle("screenWindow", 20), "screenWindow");
+	const std::string a =
+	    ui::ellipsizeMiddle("shaders.camera.overscanLeft", 18);
+	const std::string b =
+	    ui::ellipsizeMiddle("shaders.camera.overscanRight", 18);
+	EXPECT_EQ(a, "shaders.c…scanLeft");
+	EXPECT_EQ(string_width(a), 18);
+	EXPECT_NE(a, b); // names with a long shared prefix stay apart
+	EXPECT_EQ(ui::ellipsizeMiddle("abcdef", 1), "…");
+}
+
+TEST(Ui, WrapWidthBreaksByCells)
+{
+	EXPECT_EQ(ui::wrapWidth("", 5), std::vector<std::string>{""});
+	EXPECT_EQ(ui::wrapWidth("abcdefg", 3),
+	          (std::vector<std::string>{"abc", "def", "g"}));
+	EXPECT_EQ(ui::wrapWidth("日本語", 3),
+	          (std::vector<std::string>{"日", "本", "語"}));
+	EXPECT_EQ(ui::wrapWidth("ab", 0), (std::vector<std::string>{"a", "b"}));
+}

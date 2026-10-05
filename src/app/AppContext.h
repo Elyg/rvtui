@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/Annotations.h"
+#include "image/Colour.h"
 #include "image/ImageService.h"
 #include "term/Caps.h"
 #include "term/Kitty.h"
@@ -35,6 +36,7 @@ struct AppContext
 	TermCaps& m_caps;
 	kitty::Transmitter& m_kitty;
 	Annotations& m_ann;
+	ColourManager& m_colour; ///< OCIO config, view and transforms
 	/// Ask for a redraw. Safe from any thread.
 	std::function<void()> m_redraw;
 	/// Run `task` on the UI thread, without a redraw of its own. Safe from

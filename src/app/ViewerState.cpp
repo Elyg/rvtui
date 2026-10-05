@@ -3,6 +3,7 @@
 #include <ftxui/screen/terminal.hpp>
 
 #include <algorithm>
+#include <iterator>
 
 namespace fs = std::filesystem;
 
@@ -36,6 +37,27 @@ std::string Source::frameLabel(int i) const
 	    m_entry.m_frameNumbers[std::clamp(i, 0, frameCount() - 1)]);
 }
 
+int Source::indexForFrameNumber(int number) const
+{
+	const auto& nums = m_entry.m_frameNumbers;
+	if(m_entry.m_kind != Entry::Kind::SEQUENCE || nums.empty())
+	{
+		return 0;
+	}
+	const auto it = std::ranges::lower_bound(nums, number);
+	if(it == nums.begin())
+	{
+		return 0;
+	}
+	if(it == nums.end())
+	{
+		return static_cast<int>(nums.size()) - 1;
+	}
+	const auto before = std::prev(it);
+	const auto nearest = *it - number < number - *before ? it : before;
+	return static_cast<int>(nearest - nums.begin());
+}
+
 std::string sourceKey(const Source& s)
 {
 	std::error_code ec;
@@ -56,6 +78,23 @@ int ViewerState::frameCount() const
 		n = std::max(n, s.frameCount());
 	}
 	return n;
+}
+
+const Source* ViewerState::numberedSource() const
+{
+	if(m_current >= 0 && m_current < static_cast<int>(m_sources.size()) &&
+	   m_sources[m_current].m_entry.m_kind == Entry::Kind::SEQUENCE)
+	{
+		return &m_sources[m_current];
+	}
+	for(const auto& s : m_sources)
+	{
+		if(s.m_entry.m_kind == Entry::Kind::SEQUENCE)
+		{
+			return &s;
+		}
+	}
+	return nullptr;
 }
 
 const AnnotationSet* ViewerState::sourceAnnotations(const Annotations& ann,

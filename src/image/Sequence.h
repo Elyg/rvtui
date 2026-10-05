@@ -56,7 +56,8 @@ Entry entryForPath(const std::filesystem::path& file);
 
 /// Resolve command-line paths into viewer entries. A plain frame path opens
 /// just that file; a sequence needs a glob — `shot.*.exr`, `shot.####.exr`
-/// (each # one digit), or the shell's expansion of one — whose matches are
+/// (each # one digit), `shot.#.exr` (a lone # takes any padding), or the
+/// shell's expansion of one — whose matches are
 /// grouped like a directory listing. Arguments that match nothing land in
 /// `missing`; non-images are dropped.
 std::vector<Entry> entriesForArgs(const std::vector<std::string>& args,

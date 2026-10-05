@@ -30,6 +30,7 @@ Recorded in Ghostty through tmux. The sample images are the
 rvtui                      # browse the current directory
 rvtui shots/               # browse a directory
 rvtui 'shot.####.exr' ...  # view sequences
+rvtui 'shot.#.exr'         # a lone # finds the padding itself
 rvtui --dump foo.exr       # print layers, channels and metadata
 rvtui --doctor             # check the terminal / tmux setup
 ```
@@ -54,6 +55,14 @@ they get half-blocks.
 - **`rvtui --doctor`** checks the terminal, tmux and clipboard setup and says what to
   change.
 
+## Colour
+
+With `$OCIO` set, rvtui shows images through that OpenColorIO config: pick the
+display, view and look, and override an image's input colour space (otherwise the
+config's file rules decide), in the colour pane (`6`). Without `$OCIO` it shows
+plain sRGB; the pane can switch to OCIO's built-in ACES configs, and remembers the
+choice. `s` toggles the view transform off (raw values).
+
 ## Install
 
 ### Home Manager (flake)
@@ -61,7 +70,7 @@ they get half-blocks.
 ```nix
 # flake.nix
 inputs = {
-  rvtui.url = "github:Elyg/rvtui/v0.0.1";   # or "github:Elyg/rvtui" for latest main
+  rvtui.url = "github:Elyg/rvtui/v0.0.2";   # or "github:Elyg/rvtui" for latest main
   rvtui.inputs.nixpkgs.follows = "nixpkgs";
 };
 
@@ -94,7 +103,7 @@ binary that runs on any distro with no dependencies. Two architectures:
 | aarch64 (ARM64) | `rvtui-<version>-linux-aarch64.tar.gz` |
 
 ```sh
-v=0.0.1; arch=$(uname -m)   # x86_64 or aarch64
+v=0.0.2; arch=$(uname -m)   # x86_64 or aarch64
 curl -L "https://github.com/Elyg/rvtui/releases/download/v$v/rvtui-$v-linux-$arch.tar.gz" \
   | tar -xz -C ~/.local/bin rvtui
 ```
@@ -108,7 +117,7 @@ Apple Silicon only: `rvtui-<version>-macos-arm64.tar.gz` from the same release p
 links only against system libraries.
 
 ```sh
-v=0.0.1
+v=0.0.2
 curl -L "https://github.com/Elyg/rvtui/releases/download/v$v/rvtui-$v-macos-arm64.tar.gz" \
   | tar -xz -C ~/.local/bin rvtui
 ```

@@ -28,6 +28,7 @@ find_package(OpenEXR REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(libdeflate REQUIRED)
 find_package(CLI11 REQUIRED)
+find_package(OpenColorIO REQUIRED)
 find_package(Threads REQUIRED)
 if(TARGET ftxui::ftxui)
     set(RVTUI_FTXUI ftxui::ftxui)
@@ -57,6 +58,7 @@ add_library(rvtui_core STATIC
     src/app/AnnotationsPane.cpp
     src/app/App.cpp
     src/app/AppContext.cpp
+    src/app/ColourPane.cpp
     src/app/Browser.cpp
     src/app/FileWatcher.cpp
     src/app/FilesPane.cpp
@@ -65,8 +67,10 @@ add_library(rvtui_core STATIC
     src/app/LineEditor.cpp
     src/app/MetaPane.cpp
     src/app/Player.cpp
+    src/app/Sheet.cpp
     src/app/Viewer.cpp
     src/app/ViewerState.cpp
+    src/image/Colour.cpp
     src/image/ExrLoader.cpp
     src/image/ImageBuffer.cpp
     src/image/ImageService.cpp
@@ -87,7 +91,8 @@ add_library(rvtui_core STATIC
     src/util/Ui.cpp)
 target_include_directories(rvtui_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(rvtui_core PUBLIC
-    ${RVTUI_FTXUI} spdlog::spdlog OpenEXR::OpenEXR stb::stb ZLIB::ZLIB
+    ${RVTUI_FTXUI} spdlog::spdlog OpenEXR::OpenEXR OpenColorIO::OpenColorIO
+    stb::stb ZLIB::ZLIB
     ${RVTUI_LIBDEFLATE} Threads::Threads)
 
 add_executable(rvtui src/main.cpp)
@@ -100,12 +105,14 @@ if(RVTUI_BUILD_TESTS)
         tests/test_annotations.cpp
         tests/test_browser.cpp
         tests/test_clipboard.cpp
+        tests/test_colour.cpp
         tests/test_file_watcher.cpp
         tests/test_image.cpp
         tests/test_line_editor.cpp
         tests/test_panes.cpp
         tests/test_player.cpp
         tests/test_sequence_kitty.cpp
+        tests/test_sheet.cpp
         tests/test_transfer.cpp
         tests/test_util_ui.cpp
         tests/test_viewer.cpp)

@@ -58,6 +58,13 @@ bool writeFile(const std::string& path, const Rgba8Image& img);
 
 /// Delete an image and free its data.
 std::string deleteImage(uint32_t id, bool tmux);
+/// Delete the placements of an image, keeping its data.
+std::string deletePlacements(uint32_t id, bool tmux);
+
+/// The placement id of every virtual placement: one per image, so a picture
+/// sent again under the same image id replaces its placement instead of
+/// adding one (with several, terminals draw any of them: stale sizes).
+constexpr uint32_t PLACEMENT_ID = 1;
 
 /// Sends kitty images to the terminal and keeps what that needs between
 /// draws: the image ids in use, deletes waiting for the next frame, and the

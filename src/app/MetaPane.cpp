@@ -4,6 +4,7 @@
 #include "util/Ui.h"
 
 #include <ftxui/component/event.hpp>
+#include <ftxui/screen/string.hpp>
 #include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>
 
@@ -53,16 +54,126 @@ std::vector<MetaPane::Item> MetaPane::items(const ImageInfoPtr& info) const
 	return items;
 }
 
-Element MetaPane::render(const ImageInfoPtr& info)
+int MetaPane::nameColumn(const std::vector<Item>& all)
+{
+	// The longest name plus a one-cell gap, but never more than ~45% of the
+	// pane: values need the room more.
+	int longest = 0;
+	for(const Item& it : all)
+	{
+		if(it.m_kind == Item::Kind::ATTRIBUTE || it.m_kind == Item::Kind::LAYER)
+		{
+			longest = std::max(longest, string_width(it.m_name));
+		}
+	}
+	const int cap = std::max(8, sidePanelWidth() * 45 / 100 - NAME_INDENT);
+	return std::min(longest + 1, cap);
+}
+
+Elements MetaPane::itemLines(const Item& it, int nameCol, bool expand) const
 {
 	using K = Item::Kind;
+	const int width = sidePanelWidth();
+	// Whole lines, cut to the pane with "…", or (expand: the cursor row)
+	// wrapped onto as many lines as they take.
+	auto plain = [&](const std::string& s, int indent, Decorator style)
+	{
+		Elements out;
+		const int room = std::max(1, width - indent);
+		const std::string pad(static_cast<size_t>(indent), ' ');
+		if(!expand)
+		{
+			out.push_back(text(pad + ui::ellipsizeEnd(s, room)) | style);
+			return out;
+		}
+		for(const auto& l : ui::wrapWidth(s, room))
+		{
+			out.push_back(text(pad + l) | style);
+		}
+		return out;
+	};
+	switch(it.m_kind)
+	{
+		case K::TITLE:
+			return plain(it.m_name, 1, bold);
+		case K::PATH:
+		{
+			if(expand)
+			{
+				return plain(it.m_value, 1, dim);
+			}
+			// Keep the tail (the interesting end) when it does not fit.
+			return {text(" " + ui::ellipsizeStart(it.m_value,
+			                                      std::max(8, width - 2))) |
+			        dim};
+		}
+		case K::PART:
+			return plain(it.m_name +
+			                 (it.m_value.empty() ? "" : " · " + it.m_value),
+			             1,
+			             bold | color(Color::Cyan));
+		case K::LAYERS:
+			return {text(" layers") | bold | color(Color::Cyan)};
+		case K::ATTRIBUTE:
+		case K::LAYER:
+			break;
+	}
+	// name  value, in two columns.
+	const bool attr = it.m_kind == K::ATTRIBUTE;
+	const Decorator nameStyle =
+	    attr ? color(Color::Yellow)
+	         : (it.m_name == m_state.m_layerLabel ? bold : nothing);
+	const Decorator valueStyle = attr ? nothing : dim;
+	const int valueCol = NAME_INDENT + nameCol;
+	const int valueRoom = std::max(1, width - valueCol);
+	const std::string indent(NAME_INDENT, ' ');
+	auto nameCell = [&](const std::string& name)
+	{ return text(indent + name) | nameStyle | size(WIDTH, EQUAL, valueCol); };
+	if(!expand)
+	{
+		return {hbox({
+		    nameCell(ui::ellipsizeMiddle(it.m_name, nameCol - 1)),
+		    text(ui::ellipsizeEnd(it.m_value, valueRoom)) | valueStyle,
+		})};
+	}
+	Elements out;
+	const bool nameFits = string_width(it.m_name) <= nameCol - 1;
+	if(!nameFits)
+	{
+		// The whole name first, on lines of its own.
+		for(const auto& l : ui::wrapWidth(it.m_name, width - NAME_INDENT))
+		{
+			out.push_back(text(indent + l) | nameStyle);
+		}
+	}
+	const auto values = ui::wrapWidth(it.m_value, valueRoom);
+	for(size_t v = 0; v < values.size(); ++v)
+	{
+		out.push_back(hbox({
+		    nameCell(v == 0 && nameFits ? it.m_name : ""),
+		    text(values[v]) | valueStyle,
+		}));
+	}
+	return out;
+}
+
+Element MetaPane::render(const ImageInfoPtr& info)
+{
 	const auto all = items(info);
 	const int total = static_cast<int>(all.size());
 	const bool focus = focused();
 	m_cursor = std::clamp(m_cursor, 0, std::max(0, total - 1));
+	const int nameCol = nameColumn(all);
+	// Focused, the cursor row shows its whole name and value.
+	Elements cursorLines;
+	if(focus && total > 0)
+	{
+		cursorLines = itemLines(all[m_cursor], nameCol, true);
+	}
+	const int extra = std::max(0, static_cast<int>(cursorLines.size()) - 1);
 
-	// Keep the cursor on screen (rows from the last layout, minus the title
-	// and footer).
+	// Keep the cursor (all of its lines) on screen: rows from the last
+	// layout, minus the title and footer.
 	const int rows = std::max(1, m_box.y_max - m_box.y_min - 1);
 	if(focus)
 	{
@@ -70,9 +181,9 @@ Element MetaPane::render(const ImageInfoPtr& info)
 		{
 			m_scroll = m_cursor;
 		}
-		else if(m_cursor >= m_scroll + rows)
+		else if(m_cursor + extra >= m_scroll + rows)
 		{
-			m_scroll = m_cursor - rows + 1;
+			m_scroll = std::min(m_cursor, m_cursor + extra - rows + 1);
 		}
 	}
 	m_scroll = std::clamp(m_scroll, 0, std::max(0, total - 1));
@@ -82,55 +193,14 @@ Element MetaPane::render(const ImageInfoPtr& info)
 	Elements lines;
 	for(int i = m_scroll; i < total; ++i)
 	{
-		const Item& it = all[i];
-		Element line;
-		switch(it.m_kind)
+		Elements item = focus && i == m_cursor
+		                    ? cursorLines
+		                    : itemLines(all[i], nameCol, false);
+		for(auto& line : item)
 		{
-			case K::TITLE:
-				line = text(" " + it.m_name) | bold;
-				break;
-			case K::PATH:
-			{
-				// Keep the tail (the interesting end) when it does not fit.
-				const size_t room =
-				    static_cast<size_t>(std::max(8, sidePanelWidth() - 3));
-				std::string p = it.m_value;
-				if(p.size() > room)
-				{
-					p = "…" + p.substr(p.size() - room + 1);
-				}
-				line = text(" " + p) | dim;
-				break;
-			}
-			case K::PART:
-				line = text(" " + it.m_name +
-				            (it.m_value.empty() ? "" : " · " + it.m_value)) |
-				       bold | color(Color::Cyan);
-				break;
-			case K::LAYERS:
-				line = text(" layers") | bold | color(Color::Cyan);
-				break;
-			case K::ATTRIBUTE:
-				line = hbox({
-				    text("  " + it.m_name) | color(Color::Yellow) |
-				        size(WIDTH, EQUAL, 20),
-				    text(it.m_value),
-				});
-				break;
-			case K::LAYER:
-				line = hbox({
-				    text("  " + it.m_name) |
-				        (it.m_name == m_state.m_layerLabel ? bold : nothing) |
-				        size(WIDTH, EQUAL, 20),
-				    text(it.m_value) | dim,
-				});
-				break;
+			lines.push_back(focus && i >= selLo && i <= selHi ? line | inverted
+			                                                  : line);
 		}
-		if(focus && i >= selLo && i <= selHi)
-		{
-			line = line | inverted;
-		}
-		lines.push_back(line);
 	}
 	Element footer =
 	    focus

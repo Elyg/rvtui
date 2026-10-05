@@ -4,8 +4,10 @@
 
 #include <initializer_list>
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace rv::ui
 {
@@ -40,5 +42,17 @@ struct StatusLine
 
 /// "─[n]─Name───…" pane title, `width` cells wide.
 [[nodiscard]] std::string paneTitle(std::string_view head, int width);
+
+/// `s` in at most `width` cells: whole if it fits, else cut at the end with
+/// "…" (by display width, never inside a glyph).
+[[nodiscard]] std::string ellipsizeEnd(std::string_view s, int width);
+/// Like ellipsizeEnd(), but the start goes: "…/shot/render.ass".
+[[nodiscard]] std::string ellipsizeStart(std::string_view s, int width);
+/// Like ellipsizeEnd(), but the middle goes: "shaders.cam…anLeft" keeps
+/// names that share a long prefix apart.
+[[nodiscard]] std::string ellipsizeMiddle(std::string_view s, int width);
+/// `s` broken into lines of at most `width` cells (by glyph, not by word);
+/// one empty line for an empty `s`.
+[[nodiscard]] std::vector<std::string> wrapWidth(std::string_view s, int width);
 
 } // namespace rv::ui

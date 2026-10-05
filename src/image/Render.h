@@ -2,11 +2,15 @@
 
 #include "image/ImageBuffer.h"
 
+#include <array>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace rv
 {
+
+class ColourTransform;
 
 /// Colour, one channel as grey, or luma.
 enum class ChannelMode
@@ -36,6 +40,9 @@ struct DisplayParams
 	float m_exposure = 0.0f; ///< stops
 	float m_gamma = 1.0f;
 	bool m_srgb = true; ///< linear → sRGB OETF (else plain clamp)
+	/// OCIO display transform in place of the sRGB OETF (when m_srgb):
+	/// exposure, then this, then gamma.
+	std::shared_ptr<const ColourTransform> m_ocio;
 	Outlines m_outlines = Outlines::NONE; ///< `w` turns them on
 	bool m_selected = false; ///< tiles: dashed highlight just inside the frame
 	bool operator==(const DisplayParams&) const = default;
@@ -98,6 +105,10 @@ ViewMapping resolveView(const Box2i& fitBox,
 
 /// Exposure, sRGB OETF, gamma; result in [0, 1] (NaN/inf and negatives: 0).
 float applyDisplay(float v, const DisplayParams& p);
+/// One colour as renderLayer shows it, 8-bit: through the OCIO transform
+/// when there is one, else applyDisplay() per channel.
+std::array<int, 3>
+displayRgb8(float r, float g, float b, const DisplayParams& p);
 
 /// Resample + display-transform a layer into an RGBA8 image of outW x outH.
 /// Pixels outside the data window are transparent (alpha 0) so the terminal

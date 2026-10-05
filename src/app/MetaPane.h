@@ -77,7 +77,15 @@ public:
 	[[nodiscard]] bool event(const ftxui::Event& e, const ImageInfoPtr& info);
 
 private:
+	/// Cells before an attribute / layer name.
+	static constexpr int NAME_INDENT = 2;
+
 	void copy(const ImageInfoPtr& info, bool valuesOnly);
+	/// Width of the name column (incl. the gap before the value).
+	static int nameColumn(const std::vector<Item>& all);
+	/// The screen lines of one row: one, cut to fit, or (`expand`, the
+	/// focused cursor row) as many as its whole name and value take.
+	ftxui::Elements itemLines(const Item& it, int nameCol, bool expand) const;
 
 	ViewerState& m_state;
 	AppContext& m_ctx;

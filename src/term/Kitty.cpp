@@ -169,7 +169,7 @@ std::string placementKeys(const Rgba8Image& img, const TransmitOptions& opt)
 	                   ",i=" + std::to_string(opt.m_id);
 	if(opt.m_virtualPlacement)
 	{
-		keys += ",U=1";
+		keys += ",U=1,p=" + std::to_string(PLACEMENT_ID);
 	}
 	if(opt.m_cols > 0)
 	{
@@ -301,6 +301,12 @@ bool writeSharedMemory(const std::string& name, const Rgba8Image& img)
 std::string deleteImage(uint32_t id, bool tmux)
 {
 	std::string seq = "\x1b_Ga=d,d=I,q=2,i=" + std::to_string(id) + "\x1b\\";
+	return tmux ? tmuxWrap(seq) : seq;
+}
+
+std::string deletePlacements(uint32_t id, bool tmux)
+{
+	std::string seq = "\x1b_Ga=d,d=i,q=2,i=" + std::to_string(id) + "\x1b\\";
 	return tmux ? tmuxWrap(seq) : seq;
 }
 

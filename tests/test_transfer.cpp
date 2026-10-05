@@ -167,7 +167,8 @@ TEST(Kitty, TransmitSendsIncompressiblePixelsUncompressed)
 	kitty::TransmitOptions opt;
 	opt.m_id = 9;
 	const std::string s = kitty::transmit(noise(512, 256), opt);
-	EXPECT_EQ(s.rfind("\x1b_Ga=T,f=32,q=2,s=512,v=256,i=9,U=1,m=1;", 0), 0u);
+	EXPECT_EQ(s.rfind("\x1b_Ga=T,f=32,q=2,s=512,v=256,i=9,U=1,p=1,m=1;", 0),
+	          0u);
 	EXPECT_EQ(s.find("o=z"), std::string::npos);
 }
 
@@ -180,7 +181,7 @@ TEST(Kitty, TransmitSharedSendsOnlyTheName)
 	const std::string s = kitty::transmitShared(noise(2, 2), "/x-1", opt);
 	// base64("/x-1") = "L3gtMQ=="
 	EXPECT_EQ(s,
-	          "\x1b_Ga=T,f=32,t=s,S=16,q=2,s=2,v=2,i=7,U=1,c=1,r=1;L3gtMQ=="
+	          "\x1b_Ga=T,f=32,t=s,S=16,q=2,s=2,v=2,i=7,U=1,p=1,c=1,r=1;L3gtMQ=="
 	          "\x1b\\");
 }
 
@@ -394,6 +395,34 @@ TEST(ImageSlot, PrepareAheadIsQuietAndTheNextDrawSendsAtOnce)
 	// delete.
 	EXPECT_EQ(KittySlot::idOf(writes[0]), shown);
 	EXPECT_FALSE(k.m_tx.hasPendingDeletes());
+}
+
+TEST(ImageSlot, ANewSizeReplacesThePlacementInsteadOfAddingOne)
+{
+	// The bug: zoomed tiles (and a fold) sent pictures of new sizes under the
+	// same image id with no placement id; terminals kept every placement and
+	// drew any of them, at stale sizes.
+	KittySlot k;
+	const auto img = grey(0.5f);
+	k.draw(img);
+	ASSERT_TRUE(waitFor([&] { return k.m_ready > 0; }));
+	k.draw(img);
+	auto writes = k.m_cap.take();
+	ASSERT_EQ(writes.size(), 1u);
+	EXPECT_NE(writes[0].find(",U=1,p=1,"), std::string::npos) << writes[0];
+	EXPECT_EQ(writes[0].find("a=d"), std::string::npos);
+
+	// The same picture in a smaller box: the old placement goes first.
+	k.m_box = {0, 4, 0, 1};
+	const int readies = k.m_ready;
+	k.draw(img);
+	ASSERT_TRUE(waitFor([&] { return k.m_ready > readies; }));
+	k.draw(img);
+	writes = k.m_cap.take();
+	ASSERT_EQ(writes.size(), 2u);
+	EXPECT_EQ(writes[0],
+	          kitty::deletePlacements(KittySlot::idOf(writes[1]), false));
+	EXPECT_NE(writes[1].find(",p=1,c=5,r=2"), std::string::npos) << writes[1];
 }
 
 TEST(ImageSlot, EveryPictureGoesOutUnderTheSlotsOneId)
