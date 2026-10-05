@@ -1,0 +1,44 @@
+name: cache
+
+# Release builds run on tags, and a tag can only read caches saved on itself or on main,
+# so without this every release starts cold. Build the release dependencies on main
+# whenever they change, and touch them twice a week: GitHub evicts caches unused for 7 days.
+on:
+  push:
+    branches: [main]
+    paths:
+      - flake.lock
+      - flake.nix
+      - nix/**
+      - conanfile.py
+      - conan-profiles/**
+      - .github/workflows/cache.yml
+  schedule:
+    - cron: "0 4 * * 1,4"
+  workflow_dispatch:
+
+jobs:
+  linux-static:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      # Everything `nix build .#static` needs, but not rvtui itself.
+      - run: nix build .#static.inputDerivation -L
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: conan-macos-arm64-${{ hashFiles('conanfile.py', 'conan-profiles/*') }}
+      - run: nix develop -c just deps

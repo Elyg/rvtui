@@ -15,6 +15,36 @@
     let
       # Nix builds have no tags; identify them by commit instead.
       version = "git-${self.shortRev or self.dirtyShortRev or "dev"}";
+
+      # pkgsStatic libraries aren't in the binary cache, so `.#static` compiles them from
+      # source; skip their test suites (rvtui's own still run). Non-static packages are
+      # left untouched so they keep coming from the cache.
+      skipStaticDepTests =
+        final: prev:
+        let
+          noTests =
+            name: extra:
+            if prev.stdenv.hostPlatform.isStatic then
+              prev.${name}.overrideAttrs (old: { doCheck = false; } // extra old)
+            else
+              prev.${name};
+          flags = fs: old: { cmakeFlags = (old.cmakeFlags or [ ]) ++ fs; };
+          none = _: { };
+        in
+        {
+          fmt = noTests "fmt" (flags [ "-DFMT_TEST=OFF" ]);
+          # catch2 is only there for the tests.
+          spdlog = noTests "spdlog" (old: flags [ "-DSPDLOG_BUILD_TESTS=OFF" ] old // { buildInputs = [ ]; });
+          cli11 = noTests "cli11" (old: flags [ "-DCLI11_BUILD_TESTS=OFF" ] old // { buildInputs = [ ]; });
+          libdeflate = noTests "libdeflate" (flags [ "-DLIBDEFLATE_BUILD_TESTS=OFF" ]);
+          imath = noTests "imath" (flags [ "-DBUILD_TESTING=OFF" ]);
+          openexr = noTests "openexr" (flags [ "-DBUILD_TESTING=OFF" ]);
+          # These derive their test build flags from doCheck.
+          ftxui = noTests "ftxui" none;
+          yaml-cpp = noTests "yaml-cpp" none;
+          minizip-ng = noTests "minizip-ng" none;
+          pystring = noTests "pystring" none;
+        };
     in
     {
       overlays.default = final: prev: {
@@ -24,7 +54,10 @@
     // flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ skipStaticDepTests ];
+        };
         hostLlvm = pkgs.llvmPackages_20;
 
         tools = with pkgs; [
