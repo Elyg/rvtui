@@ -5,6 +5,7 @@
 
 #include <ftxui/dom/node.hpp>
 #include <ftxui/screen/screen.hpp>
+#include <ftxui/screen/terminal.hpp>
 #include <gtest/gtest.h>
 
 using namespace rv;
@@ -410,6 +411,143 @@ TEST_F(ViewerTest, PaneKeysOpenFocusAndClose)
 	EXPECT_EQ(state().m_focus, Focus::LAYERS);
 	press(key("1"));
 	EXPECT_EQ(state().m_focus, Focus::IMAGE);
+}
+
+TEST_F(ViewerTest, DraggingTheLeftDividerResizesTheColumn)
+{
+	m_v.open({layersEntry(), sequenceEntry()});
+	press(key("3")); // files
+	draw();
+	const int before = state().leftPanelWidth();
+	auto mouse = [&](int x, ftxui::Mouse::Motion motion)
+	{
+		ftxui::Mouse m;
+		m.button = ftxui::Mouse::Left;
+		m.motion = motion;
+		m.x = x;
+		m.y = 3;
+		press(Event::Mouse("", m));
+	};
+	mouse(before, ftxui::Mouse::Pressed); // on the separator
+	mouse(before + 4, ftxui::Mouse::Moved);
+	mouse(before + 4, ftxui::Mouse::Released);
+	EXPECT_EQ(state().leftPanelWidth(), before + 4);
+	// Narrower than a short name, or over the image: no further.
+	mouse(before + 4, ftxui::Mouse::Pressed);
+	mouse(1, ftxui::Mouse::Moved);
+	EXPECT_EQ(state().leftPanelWidth(), 16);
+	mouse(1000, ftxui::Mouse::Moved);
+	mouse(1000, ftxui::Mouse::Released);
+	EXPECT_LT(state().leftPanelWidth(),
+	          ftxui::Terminal::Size().dimx - state().sidePanelWidth());
+	// Released: moving the mouse leaves it be.
+	const int after = state().leftPanelWidth();
+	ftxui::Mouse move;
+	move.motion = ftxui::Mouse::Moved;
+	move.x = 5;
+	move.y = 3;
+	(void)m_v.event(Event::Mouse("", move));
+	EXPECT_EQ(state().leftPanelWidth(), after);
+}
+
+namespace
+{
+
+// The screen row and column where `title` is drawn ({-1, -1}: nowhere).
+std::pair<int, int> titleAt(Viewer& v, const std::string& title)
+{
+	ftxui::Screen screen(80, 24);
+	ftxui::Render(screen, v.render());
+	for(int y = 0; y < screen.dimy(); ++y)
+	{
+		std::string row;
+		std::vector<int> cols; // screen column of each byte of `row`
+		for(int x = 0; x < screen.dimx(); ++x)
+		{
+			const std::string& c = screen.PixelAt(x, y).character;
+			row += c.empty() ? " " : c;
+			cols.resize(row.size(), x);
+		}
+		if(const auto at = row.find(title); at != std::string::npos)
+		{
+			return {y, cols[at]};
+		}
+	}
+	return {-1, -1};
+}
+
+} // namespace
+
+TEST_F(ViewerTest, DraggingTheFilesTitleShowsMoreOrFewerRows)
+{
+	m_v.open({layersEntry(), sequenceEntry()});
+	press(key("3"));
+	press(key("j"));
+	press(key("e")); // the sequence's frames: global + 4 rows
+	draw();
+	const int y0 = titleAt(m_v, "[3]─Files").first;
+	ASSERT_GT(y0, 0);
+	auto mouse = [&](int y, ftxui::Mouse::Motion motion)
+	{
+		ftxui::Mouse m;
+		m.button = ftxui::Mouse::Left;
+		m.motion = motion;
+		m.x = 4;
+		m.y = y;
+		press(Event::Mouse("", m));
+	};
+	// Down two: two rows fewer, the title where the mouse let go.
+	mouse(y0, ftxui::Mouse::Pressed);
+	mouse(y0 + 2, ftxui::Mouse::Moved);
+	mouse(y0 + 2, ftxui::Mouse::Released);
+	EXPECT_EQ(titleAt(m_v, "[3]─Files").first, y0 + 2);
+	// Up past the list: it shows every row, no more.
+	mouse(y0 + 2, ftxui::Mouse::Pressed);
+	mouse(1, ftxui::Mouse::Moved);
+	mouse(1, ftxui::Mouse::Released);
+	EXPECT_EQ(titleAt(m_v, "[3]─Files").first, y0);
+}
+
+TEST_F(ViewerTest, DraggingTheRightDividerResizesTheColumn)
+{
+	m_v.open({layersEntry()});
+	press(key("2")); // metadata, on the right
+	draw();
+	const int w = ftxui::Terminal::Size().dimx;
+	const int before = state().sidePanelWidth();
+	auto mouse = [&](int x, ftxui::Mouse::Motion motion)
+	{
+		ftxui::Mouse m;
+		m.button = ftxui::Mouse::Left;
+		m.motion = motion;
+		m.x = x;
+		m.y = 3;
+		press(Event::Mouse("", m));
+	};
+	// The separator just left of the column's title.
+	const int divider = titleAt(m_v, "[2]─Metadata").second - 2;
+	ASSERT_GE(divider, 0);
+	mouse(divider, ftxui::Mouse::Pressed);
+	mouse(divider - 4, ftxui::Mouse::Moved); // leftwards: wider
+	mouse(divider - 4, ftxui::Mouse::Released);
+	EXPECT_EQ(state().sidePanelWidth(), before + 4);
+	EXPECT_EQ(state().m_leftFrac, 0); // the left one untouched
+	// Past the left column and some image: no further.
+	mouse(divider - 4, ftxui::Mouse::Pressed);
+	mouse(0, ftxui::Mouse::Moved);
+	mouse(0, ftxui::Mouse::Released);
+	EXPECT_LE(state().sidePanelWidth(), w - state().leftPanelWidth() - 2 - 10);
+}
+
+TEST_F(ViewerTest, ColourPaneOpensOnTheLeft)
+{
+	m_v.open({layersEntry()});
+	press(key("6"));
+	EXPECT_EQ(state().m_focus, Focus::COLOUR);
+	draw();
+	const auto [y, x] = titleAt(m_v, "[6]─Colour");
+	ASSERT_GE(y, 0);
+	EXPECT_LT(x, state().leftPanelWidth());
 }
 
 TEST_F(ViewerTest, TabWithNothingOpenSaysSo)

@@ -259,7 +259,7 @@ std::vector<std::string> drawMeta(MetaPane& p,
                                   const ImageInfoPtr& info,
                                   int height = 30)
 {
-	ftxui::Screen screen(sidePanelWidth(), height);
+	ftxui::Screen screen(ViewerState{}.sidePanelWidth(), height);
 	ftxui::Render(screen, p.render(info));
 	ftxui::Render(screen, p.render(info)); // with m_box from the first
 	std::vector<std::string> rows;
@@ -327,7 +327,7 @@ TEST_F(Panes, MetaNamesAndValuesKeepTheirColumns)
 	EXPECT_EQ(overscan, 2);
 	for(const auto& r : rows)
 	{
-		EXPECT_LE(ftxui::string_width(r), sidePanelWidth()) << r;
+		EXPECT_LE(ftxui::string_width(r), ViewerState{}.sidePanelWidth()) << r;
 	}
 }
 
@@ -515,6 +515,45 @@ TEST_F(Panes, FilesCursorRunsFromGlobalToTheLastFile)
 	EXPECT_TRUE(p.event(Event::Return));
 	EXPECT_EQ(m_state.m_current, 2);
 	EXPECT_FALSE(p.event(key("y"))); // not a files key
+}
+
+TEST_F(Panes, FilesLongNamesKeepTheirNumbersAndStayApart)
+{
+	// Names wider than the column used to squeeze the whole row, numbers
+	// included (they came and went from row to row).
+	m_state.m_sources.clear();
+	for(const char* end : {"Batch.png", "Interactive.png", "Hydra.png"})
+	{
+		m_state.m_sources.push_back({file(
+		    std::string("test_BasisCurve_ribbon_varying_normals_") + end)});
+	}
+	FilesPane p(m_state, m_c.m_ctx);
+	p.show();
+	const int w = m_state.leftPanelWidth();
+	ftxui::Screen screen(w, 8);
+	ftxui::Render(screen, p.render());
+	std::vector<std::string> rows;
+	for(int y = 2; y < 5; ++y) // below the title and the global row
+	{
+		std::string row;
+		for(int x = 0; x < w; ++x)
+		{
+			const std::string& c = screen.PixelAt(x, y).character;
+			row += c.empty() ? " " : c;
+		}
+		rows.push_back(row);
+	}
+	for(int i = 0; i < 3; ++i)
+	{
+		EXPECT_TRUE(rows[i].starts_with("  " + std::to_string(i + 1) + " "))
+		    << rows[i];
+		EXPECT_NE(rows[i].find("…"), std::string::npos) << rows[i];
+		EXPECT_LE(ftxui::string_width(rows[i]), w) << rows[i];
+	}
+	// Cut in the middle: the ends that tell them apart are still there.
+	EXPECT_NE(rows[2].find("Hydra.png"), std::string::npos) << rows[2];
+	EXPECT_NE(rows[0], rows[1]);
+	EXPECT_NE(rows[1], rows[2]);
 }
 
 TEST_F(Panes, FilesReorderKeepsShowingTheSameImage)

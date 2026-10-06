@@ -46,8 +46,29 @@ TEST(Sheet, LayoutSizesTilesToTheLargestImage)
 	    layoutSheet({{1920.0, 1080.0}, {1080.0, 1920.0}}, AW, AH, PX, PY, 200);
 	EXPECT_EQ(l.m_count, 2);
 	EXPECT_EQ(l.m_cols, 2);
-	EXPECT_EQ(l.m_tileW, AW / 2);
+	EXPECT_EQ(l.m_tileW, (AW - l.m_gapX) / 2);
 	EXPECT_EQ(l.m_tileH, AH);
+	EXPECT_LE(l.width(), AW);
+}
+
+TEST(Sheet, LayoutLeavesAThinGapAlikeBothWays)
+{
+	// A cell row between rows; between columns the cells closest to it in
+	// pixels (16 px rows, 8 px columns: two).
+	const SheetLayout l = layoutSheet(hd(4), AW, AH, PX, PY, 200);
+	EXPECT_EQ(l.m_gapY, 1);
+	EXPECT_EQ(l.m_gapX, 2);
+	EXPECT_EQ(l.origin(1).first, l.m_tileW + 2);
+	EXPECT_EQ(l.origin(2).second, l.m_tileH + 1);
+	EXPECT_EQ(l.width(), 2 * l.m_tileW + 2);
+	EXPECT_EQ(l.height(), 2 * l.m_tileH + 1);
+	EXPECT_LE(l.width(), AW);
+	EXPECT_LE(l.height(), AH);
+
+	// Tiny tiles (a long sequence) touch: a gap would be most of them.
+	const SheetLayout many = layoutSheet(hd(180), AW, AH, PX, PY, 180);
+	EXPECT_EQ(many.m_gapX, 0);
+	EXPECT_EQ(many.m_gapY, 0);
 }
 
 TEST(Sheet, LayoutPastMaxVisibleRunsOffTheBottom)
@@ -92,6 +113,14 @@ TEST(Sheet, TileAtFindsTheTileUnderAPoint)
 	EXPECT_EQ(l.tileAt(15, 7), -1); // no 4th tile
 	EXPECT_EQ(l.tileAt(-1, 1), -1);
 	EXPECT_EQ(l.tileAt(25, 1), -1);
+
+	// With gaps, a point in one is on no tile.
+	l.m_gapX = 2;
+	l.m_gapY = 1;
+	EXPECT_EQ(l.tileAt(11, 1), -1);
+	EXPECT_EQ(l.tileAt(12, 1), 1);
+	EXPECT_EQ(l.tileAt(1, 5.5), -1);
+	EXPECT_EQ(l.tileAt(1, 6), 2);
 }
 
 TEST(Sheet, FitCentresASheetThatFits)
@@ -105,9 +134,29 @@ TEST(Sheet, FitCentresASheetThatFits)
 	SheetView p = v;
 	panSheetView(p, l, {AW, AH}, 10, 10);
 	EXPECT_EQ(p, v);
-	// Nor can it zoom out past fit.
+	// Zoomed out it stays centred, down to a quarter; back in, fit exactly.
 	zoomSheetView(p, l, {AW, AH}, 0.5, 0, 0);
-	EXPECT_EQ(p, v);
+	EXPECT_DOUBLE_EQ(p.m_zoom, 0.5);
+	EXPECT_DOUBLE_EQ(p.m_cx, l.width() / 2.0);
+	EXPECT_DOUBLE_EQ(p.m_cy, l.height() / 2.0);
+	zoomSheetView(p, l, {AW, AH}, 0.01, 0, 0);
+	EXPECT_DOUBLE_EQ(p.m_zoom, MIN_SHEET_ZOOM);
+	// Wheel steps out and back in land on fit itself.
+	SheetView w = v;
+	for(double f : {1 / 1.25, 1 / 1.25, 1 / 1.25, 1.25, 1.25, 1.25})
+	{
+		zoomSheetView(w, l, {AW, AH}, f, 10, 10);
+	}
+	EXPECT_EQ(w.m_zoom, 1.0);
+}
+
+TEST(Sheet, ASheetPastTheAreaStopsZoomingOutAtFit)
+{
+	// More of it on screen would be more tiles than kitty has ids for.
+	const SheetLayout l = layoutSheet(hd(500), AW, AH, PX, PY, 180);
+	SheetView v = fitSheetView(l, {AW, AH});
+	zoomSheetView(v, l, {AW, AH}, 0.5, 0, 0);
+	EXPECT_EQ(v.m_zoom, 1.0);
 }
 
 TEST(Sheet, ZoomKeepsThePointUnderTheMousePut)
@@ -158,7 +207,9 @@ TEST(Sheet, PlacementClipsTilesToTheArea)
 		EXPECT_LE(p->m_boxY1, AH);
 		EXPECT_GT(p->m_x1 - p->m_x0, p->m_boxX1 - p->m_boxX0);
 	}
-	// Neighbours share an edge exactly: no gap, no overlap.
-	EXPECT_EQ(placeTile(l, v, {AW, AH}, 0)->m_boxX1,
-	          placeTile(l, v, {AW, AH}, 1)->m_boxX0);
+	// Neighbours are the gap apart, zoomed with the sheet.
+	EXPECT_NEAR(placeTile(l, v, {AW, AH}, 1)->m_x0 -
+	                placeTile(l, v, {AW, AH}, 0)->m_x1,
+	            l.m_gapX * 3.0,
+	            1e-9);
 }

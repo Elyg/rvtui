@@ -164,7 +164,7 @@ Element ColourPane::render(const fs::path& path, const std::string& sourceKey)
 {
 	const ColourManager& cm = m_ctx.m_colour;
 	const bool focus = focused();
-	const int width = sidePanelWidth();
+	const int width = m_state.leftPanelWidth();
 	const int room = std::max(1, width - NAME_W);
 	Elements lines;
 	for(int r = 0; r < ROWS; ++r)

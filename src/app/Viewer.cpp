@@ -860,6 +860,73 @@ bool Viewer::event(Event e)
 bool Viewer::mouseEvent(Event e, const ImageInfoPtr& info)
 {
 	auto m = e.mouse();
+	// Drag a side column's divider (the separator between it and the image)
+	// to resize it, as the browser's columns do.
+	if(m.button == Mouse::Left && m.motion == Mouse::Pressed)
+	{
+		auto onDivider = [&](int x, const Box& col)
+		{
+			return std::abs(m.x - x) <= 1 && m.y >= col.y_min &&
+			       m.y <= col.y_max;
+		};
+		// Where the widths put them (a drag moves them before the next draw).
+		const int right = Terminal::Size().dimx - coveredRight();
+		m_dragDivider =
+		    leftPanelOpen() && onDivider(coveredLeft() - 1, m_leftBox) ? 1
+		    : rightPanelOpen() && onDivider(right, m_sideBox)          ? 2
+		                                                               : 0;
+		if(m_dragDivider)
+		{
+			return true;
+		}
+	}
+	if(m_dragDivider)
+	{
+		if(m.motion == Mouse::Released)
+		{
+			m_dragDivider = 0;
+		}
+		else if(m.motion == Mouse::Moved)
+		{
+			// The divider follows the mouse: the left column ends just
+			// before it, the right one starts just after.
+			const double w = std::max(1, Terminal::Size().dimx);
+			if(m_dragDivider == 1)
+			{
+				m_state.m_leftFrac = m.x / w;
+			}
+			else
+			{
+				m_state.m_rightFrac = (w - 1 - m.x) / w;
+			}
+		}
+		return true;
+	}
+	// Drag the files pane's title up or down: it sits at the bottom, so the
+	// title follows the mouse and the list fills the rows below it.
+	if(m_files.isOpen() && m.button == Mouse::Left &&
+	   m.motion == Mouse::Pressed && m.y == m_files.titleRow() &&
+	   m.x < coveredLeft() - 1)
+	{
+		m_dragFiles = true;
+		return true;
+	}
+	if(m_dragFiles)
+	{
+		if(m.motion == Mouse::Released)
+		{
+			m_dragFiles = false;
+		}
+		else if(m.motion == Mouse::Moved)
+		{
+			// Leave each pane above it a title and a row (and a separator).
+			const int above = m_layers.isOpen() + m_colour.isOpen();
+			const int most = m_leftBox.y_max - m_leftBox.y_min + 1 - 2 -
+			                 (above ? 3 * above : 0);
+			m_files.setRows(std::min(most, m_files.bottomRow() - 1 - m.y));
+		}
+		return true;
+	}
 	const bool overInfo = m_meta.isOpen() && m_meta.contains(m.x, m.y);
 	const bool overFiles = m_files.isOpen() && m_files.contains(m.x, m.y);
 	const bool overSide = (rightPanelOpen() && inside(m_sideBox, m.x, m.y)) ||
@@ -1330,9 +1397,9 @@ Element Viewer::renderHud(const ImageInfoPtr& info)
 	if(m_tile)
 	{
 		// The sheet's zoom, against fitted.
-		zoom = m_sheetView.m_zoom <= 1.0
+		zoom = m_sheetView.m_zoom == 1.0
 		           ? " 🔍 fit "
-		           : fmt::format(" 🔍 ×{:.1f} ", m_sheetView.m_zoom);
+		           : fmt::format(" 🔍 ×{:.2g} ", m_sheetView.m_zoom);
 	}
 	parts.push_back(text(zoom) | dim);
 	if(m_state.m_picked)
@@ -1735,28 +1802,45 @@ Element Viewer::render()
 	Element leftCol, rightCol;
 	if(leftPanelOpen())
 	{
-		// Layers on top, files pinned to the bottom left.
+		// Layers and colour on top, files pinned to the bottom left. Files
+		// made taller (its title dragged up) squeeze the panes above it.
 		Elements panes;
+		auto above = [&](Element el)
+		{
+			if(!panes.empty())
+			{
+				panes.push_back(separator());
+			}
+			panes.push_back(std::move(el) | yflex_shrink);
+		};
 		if(m_layers.isOpen())
 		{
-			panes.push_back(m_layers.render(info));
+			above(m_layers.render(info));
 		}
+		if(m_colour.isOpen())
+		{
+			above(m_colour.render(path,
+			                      sourceKey(
+			                          m_state.m_sources[m_state.m_current])));
+		}
+		const bool anyAbove = !panes.empty();
 		panes.push_back(filler());
 		if(m_files.isOpen())
 		{
-			if(m_layers.isOpen())
+			if(anyAbove)
 			{
 				panes.push_back(separator());
 			}
 			panes.push_back(m_files.render());
 		}
-		const bool leftFocused =
-		    m_state.m_focus == Focus::LAYERS || m_state.m_focus == Focus::FILES;
-		leftCol =
-		    hbox(
-		        {vbox(std::move(panes)) | size(WIDTH, EQUAL, leftPanelWidth()),
-		         separator() | (leftFocused ? color(Color::Green) : nothing)}) |
-		    reflect(m_leftBox);
+		const bool leftFocused = m_state.m_focus == Focus::LAYERS ||
+		                         m_state.m_focus == Focus::FILES ||
+		                         m_state.m_focus == Focus::COLOUR;
+		leftCol = hbox({vbox(std::move(panes)) |
+		                    size(WIDTH, EQUAL, m_state.leftPanelWidth()),
+		                separator() |
+		                    (leftFocused ? color(Color::Green) : nothing)}) |
+		          reflect(m_leftBox);
 	}
 	if(rightPanelOpen())
 	{
@@ -1774,23 +1858,16 @@ Element Viewer::render()
 			add(m_inspector.render(info ? sampleAt(m_mouseX, m_mouseY)
 			                            : Sample{}));
 		}
-		if(m_colour.isOpen())
-		{
-			add(m_colour.render(path,
-			                    sourceKey(
-			                        m_state.m_sources[m_state.m_current])));
-		}
 		if(m_meta.isOpen())
 		{
 			add(m_meta.render(info) | flex);
 		}
-		const bool rightFocused = m_state.m_focus == Focus::META ||
-		                          m_state.m_focus == Focus::INSPECT ||
-		                          m_state.m_focus == Focus::COLOUR;
+		const bool rightFocused =
+		    m_state.m_focus == Focus::META || m_state.m_focus == Focus::INSPECT;
 		rightCol =
 		    hbox({separator() | (rightFocused ? color(Color::Green) : nothing),
 		          vbox(std::move(side)) |
-		              size(WIDTH, EQUAL, sidePanelWidth())}) |
+		              size(WIDTH, EQUAL, m_state.sidePanelWidth())}) |
 		    reflect(m_sideBox);
 	}
 	if(m_tile)

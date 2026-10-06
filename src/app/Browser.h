@@ -8,6 +8,7 @@
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/box.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -61,6 +62,8 @@ public:
 	{
 		return m_marks;
 	}
+	/// Mark the images among `entries` (those not marked yet), in order.
+	void mark(const std::vector<Entry>& entries);
 	const std::string& filter() const noexcept
 	{
 		return m_filter;
@@ -88,10 +91,26 @@ private:
 	bool filterEvent(const ftxui::Event& e);
 	bool mouseEvent(ftxui::Event e);
 	bool previewEvent(const ftxui::Event& e);
+	void toggleMarkAll(); ///< `a`: every image listed, or none of them
+	/// Where a column's list and its rows were drawn, for clicks.
+	struct ListBoxes
+	{
+		ftxui::Box m_list{};
+		std::vector<ftxui::Box> m_rows;
+		/// The row shown at screen cell (x, y); -1 for none.
+		int rowAt(int x, int y) const;
+	};
+	/// A column `width` cells wide, drawn where `boxes` then says.
 	ftxui::Element renderEntryList(const std::vector<Entry>& entries,
 	                               int selected,
 	                               bool active,
-	                               const std::vector<int>* indices);
+	                               const std::vector<int>* indices,
+	                               int width,
+	                               ListBoxes& boxes);
+	/// A click on a row of the current column (`row` into visibleIndices())
+	/// or of the parent one.
+	void clickRow(int row);
+	void clickParentRow(int row);
 	ftxui::Element renderPreview();
 	/// First lines of a readable text file, or nullopt if it looks binary.
 	/// Cached for the selected file (path + mtime + size).
@@ -128,6 +147,13 @@ private:
 	/// Column widths as fractions of the terminal (drag the dividers).
 	double m_parentFrac = 0.15, m_currentFrac = 0.30;
 	int m_dragDivider = 0; ///< 1 = parent|current, 2 = current|preview
+	/// As last drawn (the preview's only to outlive the drawing: reflect()
+	/// keeps a reference to each box).
+	ListBoxes m_currentBoxes, m_parentBoxes, m_previewBoxes;
+	/// The last click on a current-column row: a second one soon after on
+	/// the same row opens it (a double click).
+	int m_lastClickRow = -1;
+	std::chrono::steady_clock::time_point m_lastClick{};
 };
 
 } // namespace rv

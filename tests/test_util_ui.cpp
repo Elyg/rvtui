@@ -189,6 +189,20 @@ TEST(Ui, EllipsizeMiddleKeepsBothEnds)
 	EXPECT_EQ(ui::ellipsizeMiddle("abcdef", 1), "…");
 }
 
+TEST(Ui, EllipsizeMiddleMovesHighlightsWithTheirBytes)
+{
+	// Hits on a, e (cut out) and i: "abc…hij", 'i' after the 3-byte "…".
+	const std::vector<size_t> hits{0, 4, 8};
+	const auto [cut, at] = ui::ellipsizeMiddle("abcdefghij", 7, hits);
+	EXPECT_EQ(cut, "abc…hij");
+	EXPECT_EQ(at, (std::vector<size_t>{0, 7}));
+	EXPECT_EQ(cut.substr(at[1], 1), "i");
+	// Whole: as they were.
+	const auto [whole, same] = ui::ellipsizeMiddle("abcdefghij", 10, hits);
+	EXPECT_EQ(whole, "abcdefghij");
+	EXPECT_EQ(same, hits);
+}
+
 TEST(Ui, WrapWidthBreaksByCells)
 {
 	EXPECT_EQ(ui::wrapWidth("", 5), std::vector<std::string>{""});

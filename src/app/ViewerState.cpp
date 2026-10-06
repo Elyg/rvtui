@@ -3,6 +3,7 @@
 #include <ftxui/screen/terminal.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 
 namespace fs = std::filesystem;
@@ -107,14 +108,57 @@ const AnnotationSet* ViewerState::sourceAnnotations(const Annotations& ann,
 	return ann.findSource(sourceKey(m_sources[i]));
 }
 
-int leftPanelWidth()
+namespace
 {
-	return std::max(26, ftxui::Terminal::Size().dimx * 20 / 100);
+
+// Dragged columns keep room for a short name, and leave the image some.
+constexpr int MIN_LEFT = 16, MIN_RIGHT = 20, MIN_IMAGE = 10;
+
+// A column `w` cells wide terminal asks for: `frac` of it once dragged (0:
+// not), else `fallback`.
+int askedWidth(double frac, int w, int fallback, int least)
+{
+	return frac > 0 ? std::max(least, static_cast<int>(std::lround(frac * w)))
+	                : fallback;
 }
 
-int sidePanelWidth()
+int askedLeft(double frac, int w)
 {
-	return std::max(32, ftxui::Terminal::Size().dimx * 30 / 100);
+	return askedWidth(frac, w, std::max(26, w * 20 / 100), MIN_LEFT);
+}
+
+int askedRight(double frac, int w)
+{
+	return askedWidth(frac, w, std::max(32, w * 30 / 100), MIN_RIGHT);
+}
+
+} // namespace
+
+int ViewerState::leftPanelWidth() const
+{
+	const int w = ftxui::Terminal::Size().dimx;
+	const int asked = askedLeft(m_leftFrac, w);
+	if(m_leftFrac <= 0)
+	{
+		return asked;
+	}
+	// Against the right column as asked (not as fitted: that is fitted to
+	// this one).
+	return std::min(asked,
+	                std::max(MIN_LEFT,
+	                         w - askedRight(m_rightFrac, w) - 2 - MIN_IMAGE));
+}
+
+int ViewerState::sidePanelWidth() const
+{
+	const int w = ftxui::Terminal::Size().dimx;
+	const int asked = askedRight(m_rightFrac, w);
+	if(m_rightFrac <= 0)
+	{
+		return asked;
+	}
+	return std::min(asked,
+	                std::max(MIN_RIGHT, w - leftPanelWidth() - 2 - MIN_IMAGE));
 }
 
 } // namespace rv

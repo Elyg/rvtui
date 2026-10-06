@@ -8,6 +8,7 @@
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/box.hpp>
 
+#include <algorithm>
 #include <map>
 #include <string>
 
@@ -41,6 +42,25 @@ public:
 	{
 		return inside(m_box, x, y);
 	}
+	/// Screen rows of its title and of its last line, as last drawn: it sits
+	/// at the bottom, so dragging the title up shows more rows.
+	int titleRow() const noexcept
+	{
+		return m_box.y_min;
+	}
+	int bottomRow() const noexcept
+	{
+		return m_box.y_max;
+	}
+	/// Most list rows shown at once (the rest scroll).
+	int rows() const noexcept
+	{
+		return m_rows;
+	}
+	void setRows(int rows) noexcept
+	{
+		m_rows = std::max(MIN_ROWS, rows);
+	}
 	/// Row of the cursor: -1 = the "global" row above the files.
 	int cursor() const noexcept
 	{
@@ -70,8 +90,10 @@ private:
 	ViewerState& m_state;
 	AppContext& m_ctx;
 	AnnotationsPane m_ann;
+	static constexpr int MIN_ROWS = 3;
 	bool m_open = false;
 	int m_cursor = 0;
+	int m_rows = 10;             ///< see rows()
 	bool m_clearPending = false; ///< `D` once asked; a second `D` clears
 	/// Sequences expanded here, by sourceKey, to fold their frames back.
 	std::map<std::string, Entry> m_expandedSources;

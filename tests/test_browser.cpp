@@ -1,10 +1,14 @@
 #include "TestContext.h"
 #include "app/Browser.h"
 
+#include <ftxui/component/mouse.hpp>
+#include <ftxui/dom/node.hpp>
+#include <ftxui/screen/screen.hpp>
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <optional>
+#include <utility>
 
 using namespace rv;
 using namespace rvtest;
@@ -80,6 +84,38 @@ struct BrowserTest : ::testing::Test
 			}
 		}
 		return "";
+	}
+	// Draw the browser; the screen cell where `s` first shows at or right
+	// of column `from` ({-1, -1}: nowhere).
+	std::pair<int, int> find(const std::string& s, int from = 0)
+	{
+		ftxui::Screen screen(80, 24);
+		ftxui::Render(screen, m_b.render());
+		for(int y = 0; y < screen.dimy(); ++y)
+		{
+			std::string row;
+			std::vector<int> cols; // screen column of each byte of `row`
+			for(int x = from; x < screen.dimx(); ++x)
+			{
+				const std::string& c = screen.PixelAt(x, y).character;
+				row += c.empty() ? " " : c;
+				cols.resize(row.size(), x);
+			}
+			if(const auto at = row.find(s); at != std::string::npos)
+			{
+				return {cols[at], y};
+			}
+		}
+		return {-1, -1};
+	}
+	void click(std::pair<int, int> at)
+	{
+		ftxui::Mouse m;
+		m.button = ftxui::Mouse::Left;
+		m.motion = ftxui::Mouse::Pressed;
+		m.x = at.first;
+		m.y = at.second;
+		press(Event::Mouse("", m));
 	}
 };
 
@@ -164,6 +200,78 @@ TEST_F(BrowserTest, MarksOnlyImagesAndKeepsThemAcrossDirectories)
 	EXPECT_EQ(m_b.marks()[1].m_name, "inner.png");
 	press(Event::Escape); // no filter: Esc clears the marks
 	EXPECT_TRUE(m_b.marks().empty());
+}
+
+TEST_F(BrowserTest, AMarksEveryImageListedAndAgainNone)
+{
+	press(key("a"));
+	EXPECT_EQ(m_b.marks().size(), 2u); // the sequence and b.png only
+	press(key("a"));
+	EXPECT_TRUE(m_b.marks().empty());
+	// Filtered: what passes it.
+	type("/b.p");
+	press(Event::Return);
+	press(key("a"));
+	ASSERT_EQ(m_b.marks().size(), 1u);
+	EXPECT_EQ(m_b.marks()[0].m_name, "b.png");
+}
+
+TEST_F(BrowserTest, ClickSelectsAndASecondClickOpens)
+{
+	const auto at = find("b.png", 13); // the current column, past the parent
+	ASSERT_GE(at.first, 0);
+	click(at);
+	EXPECT_EQ(selected(), "b.png");
+	EXPECT_FALSE(m_opened);
+	click(at); // straight after: a double click
+	ASSERT_TRUE(m_opened);
+	ASSERT_EQ(m_opened->size(), 1u);
+	EXPECT_EQ((*m_opened)[0].m_name, "b.png");
+}
+
+TEST_F(BrowserTest, ClickingADirInTheParentColumnGoesThere)
+{
+	fs::create_directories(m_dir / "other");
+	select("sub");
+	press(key("l")); // in sub/: the parent column lists sub and other
+	const auto at = find("other");
+	ASSERT_GE(at.first, 0);
+	click(at);
+	EXPECT_EQ(m_b.cwd(), m_dir / "other");
+}
+
+TEST_F(BrowserTest, LongNamesAreCutSoTheColumnStaysPut)
+{
+	// The column used to scroll sideways to show a long selected name.
+	touch(m_dir / "test_BasisCurve_ribbon_varying_invalid_normals_"
+	              "Interactive.png");
+	press(key("R"));
+	const auto before = find("b.png", 13);
+	select("test_BasisCurve_ribbon_varying_invalid_normals_Interactive.png");
+	EXPECT_EQ(find("b.png", 13), before);
+	EXPECT_GE(find("…", 13).first, 0); // the long name, cut
+}
+
+TEST_F(BrowserTest, MarkTakesImagesOnceInOrder)
+{
+	// What rvtui was started with comes in marked.
+	const Entry* seq = nullptr;
+	const Entry* png = nullptr;
+	const Entry* dir = nullptr;
+	for(const auto& e : m_b.entries())
+	{
+		seq = e.m_kind == Entry::Kind::SEQUENCE ? &e : seq;
+		png = e.m_name == "b.png" ? &e : png;
+		dir = e.m_kind == Entry::Kind::DIR ? &e : dir;
+	}
+	ASSERT_TRUE(seq && png && dir);
+	m_b.mark({*png, *dir, *seq, *png});
+	ASSERT_EQ(m_b.marks().size(), 2u); // no dir, b.png once
+	EXPECT_EQ(m_b.marks()[0].m_name, "b.png");
+	EXPECT_EQ(m_b.marks()[1].m_kind, Entry::Kind::SEQUENCE);
+	m_b.mark({*png}); // already marked: stays, and stays first
+	EXPECT_EQ(m_b.marks().size(), 2u);
+	EXPECT_EQ(m_b.marks()[0].m_name, "b.png");
 }
 
 TEST_F(BrowserTest, OpensTheMarkedImagesElseTheSelectedOne)

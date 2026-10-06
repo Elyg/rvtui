@@ -77,7 +77,17 @@ struct ViewerState
 	ViewParams m_view;
 	Focus m_focus = Focus::IMAGE;
 	std::optional<Sample> m_picked; ///< last colour clicked (until viewer exit)
+	/// The side columns' widths as fractions of the terminal, once their
+	/// dividers have been dragged; 0 = the default (see leftPanelWidth()).
+	double m_leftFrac = 0, m_rightFrac = 0;
 
+	/// Width of the left column (layers / colour / files): 20% of the
+	/// terminal, at least 26 cells, until its divider is dragged elsewhere.
+	int leftPanelWidth() const;
+	/// Width of the right column (inspector / metadata): 30%, at least 32
+	/// cells, until dragged. Dragged columns leave the image some room; the
+	/// left one wins when both want it.
+	int sidePanelWidth() const;
 	/// The current frame of the active source.
 	std::filesystem::path currentFramePath() const;
 	int frameCount() const; ///< the longest source's
@@ -87,11 +97,6 @@ struct ViewerState
 	/// The lines source `i` adds (nullptr: none, or no such source).
 	const AnnotationSet* sourceAnnotations(const Annotations& ann, int i) const;
 };
-
-/// Widths of the side columns: left (files / layers), right (inspector /
-/// metadata).
-int leftPanelWidth();
-int sidePanelWidth(); ///< see leftPanelWidth()
 
 /// Whether cell (x, y) is inside `b`.
 inline bool inside(const ftxui::Box& b, int x, int y) noexcept

@@ -107,7 +107,7 @@ Element AnnotationsPane::render(bool focused)
 	std::string title = "─[3]─Files › ";
 	int used = 13 + ftxui::string_width(where);
 	std::string fill;
-	for(int i = used; i < leftPanelWidth(); ++i)
+	for(int i = used; i < m_state.leftPanelWidth(); ++i)
 	{
 		fill += "─";
 	}

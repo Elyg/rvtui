@@ -5,6 +5,7 @@
 #include "util/Fuzzy.h"
 #include "util/Ui.h"
 
+#include <ftxui/screen/string.hpp>
 #include <ftxui/screen/terminal.hpp>
 #include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>
@@ -289,6 +290,100 @@ void Browser::toggleMark(const Entry& e)
 	}
 }
 
+void Browser::mark(const std::vector<Entry>& entries)
+{
+	for(const Entry& e : entries)
+	{
+		if(e.isImage() && !isMarked(e))
+		{
+			m_marks.push_back(e);
+		}
+	}
+}
+
+void Browser::toggleMarkAll()
+{
+	// The images listed (passing the filter): mark them all, or, when all
+	// are marked already, unmark them.
+	std::vector<Entry> images;
+	for(const int i : visibleIndices())
+	{
+		if(m_entries[i].isImage())
+		{
+			images.push_back(m_entries[i]);
+		}
+	}
+	if(images.empty())
+	{
+		m_ctx.m_message = "no images to mark here";
+		return;
+	}
+	if(std::ranges::all_of(images, [&](const Entry& e) { return isMarked(e); }))
+	{
+		std::erase_if(m_marks,
+		              [&](const Entry& m)
+		              {
+			              return std::ranges::any_of(images,
+			                                         [&](const Entry& e)
+			                                         {
+				                                         return sameEntry(m, e);
+			                                         });
+		              });
+		m_ctx.m_message = fmt::format("unmarked {}", images.size());
+	}
+	else
+	{
+		mark(images);
+		m_ctx.m_message = fmt::format("marked {}", images.size());
+	}
+}
+
+int Browser::ListBoxes::rowAt(int x, int y) const
+{
+	// Rows scrolled out of the list keep boxes outside it.
+	if(!inside(m_list, x, y))
+	{
+		return -1;
+	}
+	for(size_t i = 0; i < m_rows.size(); ++i)
+	{
+		if(inside(m_rows[i], x, y))
+		{
+			return static_cast<int>(i);
+		}
+	}
+	return -1;
+}
+
+void Browser::clickRow(int row)
+{
+	// A click selects; a second one on the same row soon after opens it,
+	// as l / Enter would.
+	constexpr auto DOUBLE_CLICK = std::chrono::milliseconds(400);
+	const auto now = std::chrono::steady_clock::now();
+	const bool twice =
+	    row == m_lastClickRow && now - m_lastClick < DOUBLE_CLICK;
+	m_lastClickRow = twice ? -1 : row;
+	m_lastClick = now;
+	moveSelection(row - m_sel);
+	if(twice)
+	{
+		enterSelected();
+	}
+}
+
+void Browser::clickParentRow(int row)
+{
+	// The parent column lists this directory's siblings: go to the one
+	// clicked.
+	const auto& pe = cachedListing(m_cwd.parent_path());
+	if(row < static_cast<int>(pe.size()) &&
+	   pe[row].m_kind == Entry::Kind::DIR && pe[row].m_path != m_cwd)
+	{
+		openDirectory(pe[row].m_path);
+	}
+}
+
 void Browser::enterSelected(bool tile)
 {
 	const Entry* e = selectedEntry();
@@ -463,6 +558,14 @@ bool Browser::mouseEvent(Event e)
 		{
 			// Clicking the text preview focuses it; elsewhere leaves it.
 			m_previewFocus = overPreview && textShown;
+			if(const int r = m_currentBoxes.rowAt(m.x, m.y); r >= 0)
+			{
+				clickRow(r);
+			}
+			else if(const int p = m_parentBoxes.rowAt(m.x, m.y); p >= 0)
+			{
+				clickParentRow(p);
+			}
 		}
 		return true;
 	}
@@ -613,6 +716,10 @@ bool Browser::event(Event e)
 			m_ctx.m_message = "only images can be marked";
 		}
 	}
+	else if(e == Event::Character('a'))
+	{
+		toggleMarkAll();
+	}
 	else if(e == Event::Character('o'))
 	{
 		chooseAndExit();
@@ -640,11 +747,14 @@ bool Browser::event(Event e)
 Element Browser::renderEntryList(const std::vector<Entry>& entries,
                                  int selected,
                                  bool active,
-                                 const std::vector<int>* indices)
+                                 const std::vector<int>* indices,
+                                 int width,
+                                 ListBoxes& boxes)
 {
 	Elements rows;
 	int n = indices ? static_cast<int>(indices->size())
 	                : static_cast<int>(entries.size());
+	boxes.m_rows.assign(n, Box{});
 	for(int i = 0; i < n; ++i)
 	{
 		const Entry& e = entries[indices ? (*indices)[i] : i];
@@ -659,19 +769,34 @@ Element Browser::renderEntryList(const std::vector<Entry>& entries,
 		{
 			hits = fuzzyMatch(e.m_name, m_filter);
 		}
+		const std::string size = active && e.m_kind != Entry::Kind::DIR
+		                             ? humanSize(e.m_size) + " "
+		                             : "";
+		// The name cut in the middle to what the row has left (the space
+		// before it and the scroll indicator too): a wider row scrolled the
+		// column sideways as the cursor moved.
+		const int room = std::max(1,
+		                          width - 2 - string_width(entryIcon(e)) -
+		                              string_width(size));
+		Element name;
+		if(hits)
+		{
+			auto [shown, at] = ui::ellipsizeMiddle(e.m_name, room, *hits);
+			name = ui::highlighted(shown, at, nameStyle);
+		}
+		else
+		{
+			name = text(ui::ellipsizeMiddle(e.m_name, room)) | nameStyle;
+		}
 		Element row = hbox({
 		    text(" "),
 		    text(entryIcon(e)) |
 		        (marked                      ? color(Color::Yellow)
 		         : !e.m_expandedFrom.empty() ? color(Color::Magenta)
 		                                     : nothing),
-		    hits ? ui::highlighted(e.m_name, *hits, nameStyle)
-		         : text(e.m_name) | nameStyle,
+		    name,
 		    filler(),
-		    text(active && e.m_kind != Entry::Kind::DIR
-		             ? humanSize(e.m_size) + " "
-		             : "") |
-		        dim,
+		    text(size) | dim,
 		});
 		if(i == selected)
 		{
@@ -685,13 +810,14 @@ Element Browser::renderEntryList(const std::vector<Entry>& entries,
 				row = row | focus | dim;
 			}
 		}
-		rows.push_back(row);
+		rows.push_back(row | reflect(boxes.m_rows[i]));
 	}
 	if(rows.empty())
 	{
 		rows.push_back(text(" (empty)") | dim);
 	}
-	return vbox(std::move(rows)) | vscroll_indicator | frame;
+	return vbox(std::move(rows)) | vscroll_indicator | yframe |
+	       reflect(boxes.m_list);
 }
 
 const std::optional<std::vector<std::string>>&
@@ -769,7 +895,14 @@ Element Browser::renderPreview()
 	if(e->m_kind == Entry::Kind::DIR)
 	{
 		const auto& children = cachedListing(e->m_path);
-		return renderEntryList(children, -1, false, nullptr);
+		// The rest of the width, beside the two columns and their dividers.
+		const auto [parentW, currentW] = columnWidths();
+		return renderEntryList(children,
+		                       -1,
+		                       false,
+		                       nullptr,
+		                       Terminal::Size().dimx - parentW - currentW - 2,
+		                       m_previewBoxes);
 	}
 	if(!e->isImage())
 	{
@@ -954,11 +1087,17 @@ Element Browser::render()
 				psel = static_cast<int>(i);
 			}
 		}
-		parentCol = renderEntryList(pe, psel, false, nullptr);
+		parentCol =
+		    renderEntryList(pe, psel, false, nullptr, parentW, m_parentBoxes);
+	}
+	else
+	{
+		m_parentBoxes = {};
 	}
 	auto vis = visibleIndices();
 	m_sel = std::clamp(m_sel, 0, std::max(0, static_cast<int>(vis.size()) - 1));
-	Element currentCol = renderEntryList(m_entries, m_sel, true, &vis);
+	Element currentCol =
+	    renderEntryList(m_entries, m_sel, true, &vis, currentW, m_currentBoxes);
 
 	// Top bar: the filter prompt (first, so a long path never hides it),
 	// then the directory.

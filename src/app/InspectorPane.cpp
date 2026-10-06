@@ -80,7 +80,8 @@ Element InspectorPane::render(const Sample& s)
 	auto valueRow = [](const std::string& name, Element value)
 	{ return hbox({text(" " + name) | bold | size(WIDTH, EQUAL, 10), value}); };
 
-	Elements rows{text(ui::paneTitle("─[4]─Inspector", sidePanelWidth())) |
+	Elements rows{text(ui::paneTitle("─[4]─Inspector",
+	                                 m_state.sidePanelWidth())) |
 	                  (focus ? color(Color::Green) | bold : dim),
 	              text(" hover") | bold | color(Color::Yellow)};
 

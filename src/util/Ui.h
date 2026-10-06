@@ -51,6 +51,11 @@ struct StatusLine
 /// Like ellipsizeEnd(), but the middle goes: "shaders.cam…anLeft" keeps
 /// names that share a long prefix apart.
 [[nodiscard]] std::string ellipsizeMiddle(std::string_view s, int width);
+/// ellipsizeMiddle(), with `pos` (ascending byte offsets into `s`, as
+/// fuzzyMatch gives) moved onto the same bytes of the result; those in the
+/// cut-out middle go.
+[[nodiscard]] std::pair<std::string, std::vector<size_t>>
+ellipsizeMiddle(std::string_view s, int width, std::span<const size_t> pos);
 /// `s` broken into lines of at most `width` cells (by glyph, not by word);
 /// one empty line for an empty `s`.
 [[nodiscard]] std::vector<std::string> wrapWidth(std::string_view s, int width);

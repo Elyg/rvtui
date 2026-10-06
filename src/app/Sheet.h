@@ -8,25 +8,28 @@ namespace rv
 {
 
 /// Contact-sheet geometry, in terminal cells: tiles of one size in a grid,
-/// filled left to right then down. Pure arithmetic, no drawing.
+/// filled left to right then down, a thin gap between them. Pure arithmetic,
+/// no drawing.
 struct SheetLayout
 {
 	int m_count = 0;
 	int m_cols = 1, m_rows = 1;
 	int m_tileW = 1, m_tileH = 1; ///< cells
+	int m_gapX = 0, m_gapY = 0;   ///< cells between columns / rows
 
 	int width() const
 	{
-		return m_cols * m_tileW;
+		return m_cols * m_tileW + (m_cols - 1) * m_gapX;
 	}
 	int height() const
 	{
-		return m_rows * m_tileH;
+		return m_rows * m_tileH + (m_rows - 1) * m_gapY;
 	}
 	/// Top-left cell of tile `i` on the sheet.
 	std::pair<int, int> origin(int i) const
 	{
-		return {(i % m_cols) * m_tileW, (i / m_cols) * m_tileH};
+		return {(i % m_cols) * (m_tileW + m_gapX),
+		        (i / m_cols) * (m_tileH + m_gapY)};
 	}
 	/// The tile at sheet point (x, y); -1 between or past the tiles.
 	int tileAt(double x, double y) const;
@@ -36,7 +39,8 @@ struct SheetLayout
 /// Lay out tiles whose frames are `frames` (pixel width, height) in an area
 /// of `areaW` x `areaH` cells of `pxX` x `pxY` pixels: the column count that
 /// shows the most image overall, each tile the size of the largest image
-/// drawn in it. At most about `maxVisible` tiles fit on screen; more make a
+/// drawn in it, a cell row between rows and about as many pixels between
+/// columns. At most about `maxVisible` tiles fit on screen; more make a
 /// sheet taller than the area, to pan through.
 SheetLayout layoutSheet(const std::vector<std::pair<double, double>>& frames,
                         int areaW,
@@ -68,7 +72,13 @@ struct SheetArea
 	int m_w = 1, m_h = 1;
 };
 
-/// Keep the zoom in [1, MAX_SHEET_ZOOM] and the sheet over the area: centred
+/// The least zoom of a sheet that fits its area: tiles a quarter of fitted,
+/// the sheet centred. One that runs off the bottom stops at fit: zoomed out,
+/// it would put more tiles on screen than kitty has image ids for.
+constexpr double MIN_SHEET_ZOOM = 0.25;
+
+/// Keep the zoom in [MIN_SHEET_ZOOM or 1, MAX_SHEET_ZOOM] (see
+/// MIN_SHEET_ZOOM) and the sheet over the area: centred
 /// along an axis it fits in, else with no blank beyond its edges.
 void clampSheetView(SheetView& v, const SheetLayout& l, SheetArea a);
 /// Fit: zoom 1, the top of the sheet (all of it, when it fits).

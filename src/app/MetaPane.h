@@ -82,7 +82,7 @@ private:
 
 	void copy(const ImageInfoPtr& info, bool valuesOnly);
 	/// Width of the name column (incl. the gap before the value).
-	static int nameColumn(const std::vector<Item>& all);
+	int nameColumn(const std::vector<Item>& all) const;
 	/// The screen lines of one row: one, cut to fit, or (`expand`, the
 	/// focused cursor row) as many as its whole name and value take.
 	ftxui::Elements itemLines(const Item& it, int nameCol, bool expand) const;

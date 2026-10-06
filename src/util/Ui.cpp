@@ -226,19 +226,25 @@ std::string ellipsizeStart(std::string_view s, int width)
 
 std::string ellipsizeMiddle(std::string_view s, int width)
 {
+	return ellipsizeMiddle(s, width, {}).first;
+}
+
+std::pair<std::string, std::vector<size_t>>
+ellipsizeMiddle(std::string_view s, int width, std::span<const size_t> pos)
+{
 	const auto glyphs = sizedGlyphs(s);
 	if(totalWidth(glyphs) <= width)
 	{
-		return std::string(s);
+		return {std::string(s), {pos.begin(), pos.end()}};
 	}
 	if(width <= 0)
 	{
-		return "";
+		return {};
 	}
 	// The head gets the odd cell: "shaders.cam…anLeft".
 	const int room = width - 1;
 	const int headRoom = (room + 1) / 2, tailRoom = room / 2;
-	std::string head;
+	size_t headBytes = 0;
 	int used = 0;
 	for(const auto& [g, w] : glyphs)
 	{
@@ -246,10 +252,10 @@ std::string ellipsizeMiddle(std::string_view s, int width)
 		{
 			break;
 		}
-		head += g;
+		headBytes += g.size();
 		used += w;
 	}
-	std::string tail;
+	size_t tailBytes = 0;
 	used = 0;
 	for(auto it = glyphs.rbegin(); it != glyphs.rend(); ++it)
 	{
@@ -257,10 +263,26 @@ std::string ellipsizeMiddle(std::string_view s, int width)
 		{
 			break;
 		}
-		tail.insert(0, it->first);
+		tailBytes += it->first.size();
 		used += it->second;
 	}
-	return head + "…" + tail;
+	constexpr std::string_view DOTS = "…";
+	const size_t tailStart = s.size() - tailBytes;
+	std::vector<size_t> moved;
+	for(const size_t p : pos)
+	{
+		if(p < headBytes)
+		{
+			moved.push_back(p);
+		}
+		else if(p >= tailStart)
+		{
+			moved.push_back(p - tailStart + headBytes + DOTS.size());
+		}
+	}
+	return {std::string(s.substr(0, headBytes)) + std::string(DOTS) +
+	            std::string(s.substr(tailStart)),
+	        std::move(moved)};
 }
 
 std::vector<std::string> wrapWidth(std::string_view s, int width)

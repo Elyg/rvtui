@@ -54,7 +54,7 @@ std::vector<MetaPane::Item> MetaPane::items(const ImageInfoPtr& info) const
 	return items;
 }
 
-int MetaPane::nameColumn(const std::vector<Item>& all)
+int MetaPane::nameColumn(const std::vector<Item>& all) const
 {
 	// The longest name plus a one-cell gap, but never more than ~45% of the
 	// pane: values need the room more.
@@ -66,14 +66,15 @@ int MetaPane::nameColumn(const std::vector<Item>& all)
 			longest = std::max(longest, string_width(it.m_name));
 		}
 	}
-	const int cap = std::max(8, sidePanelWidth() * 45 / 100 - NAME_INDENT);
+	const int cap =
+	    std::max(8, m_state.sidePanelWidth() * 45 / 100 - NAME_INDENT);
 	return std::min(longest + 1, cap);
 }
 
 Elements MetaPane::itemLines(const Item& it, int nameCol, bool expand) const
 {
 	using K = Item::Kind;
-	const int width = sidePanelWidth();
+	const int width = m_state.sidePanelWidth();
 	// Whole lines, cut to the pane with "…", or (expand: the cursor row)
 	// wrapped onto as many lines as they take.
 	auto plain = [&](const std::string& s, int indent, Decorator style)
@@ -209,7 +210,8 @@ Element MetaPane::render(const ImageInfoPtr& info)
 	        : ui::paneHints(fmt::format("{}/{}", m_scroll + 1, total),
 	                        {{"2", "focus"}});
 	// lazygit-style title: `2` focuses this pane.
-	const std::string title = ui::paneTitle("─[2]─Metadata", sidePanelWidth());
+	const std::string title =
+	    ui::paneTitle("─[2]─Metadata", m_state.sidePanelWidth());
 	return vbox({
 	           text(title) | (focus ? color(Color::Green) | bold : dim),
 	           vbox(std::move(lines)) | flex,

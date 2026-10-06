@@ -65,7 +65,7 @@ Element LayersPane::render(const ImageInfoPtr& info)
 	}
 	constexpr int MAX_ROWS = 12;
 	return vbox({
-	           text(ui::paneTitle("─[5]─Layers", leftPanelWidth())) |
+	           text(ui::paneTitle("─[5]─Layers", m_state.leftPanelWidth())) |
 	               (focus ? color(Color::Green) | bold : dim),
 	           vbox(std::move(rows)) | vscroll_indicator | yframe |
 	               size(HEIGHT, LESS_THAN, MAX_ROWS),

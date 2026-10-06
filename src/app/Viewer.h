@@ -169,14 +169,15 @@ private:
 	void openSelectedTile(const ImageInfoPtr& info);
 
 	// --- panes ---
-	/// Right column: inspector / metadata. Left column: files / layers.
+	/// Right column: inspector / metadata. Left column: layers / colour /
+	/// files.
 	bool rightPanelOpen() const noexcept
 	{
-		return m_inspector.isOpen() || m_meta.isOpen() || m_colour.isOpen();
+		return m_inspector.isOpen() || m_meta.isOpen();
 	}
 	bool leftPanelOpen() const noexcept
 	{
-		return m_files.isOpen() || m_layers.isOpen();
+		return m_files.isOpen() || m_layers.isOpen() || m_colour.isOpen();
 	}
 	bool sidePanelOpen() const noexcept
 	{
@@ -185,11 +186,11 @@ private:
 	/// Terminal columns the open side columns cover (incl. their separator).
 	int coveredLeft() const
 	{
-		return leftPanelOpen() ? leftPanelWidth() + 1 : 0;
+		return leftPanelOpen() ? m_state.leftPanelWidth() + 1 : 0;
 	}
 	int coveredRight() const
 	{
-		return rightPanelOpen() ? sidePanelWidth() + 1 : 0;
+		return rightPanelOpen() ? m_state.sidePanelWidth() + 1 : 0;
 	}
 	/// `Tab`: hide every open pane; the next `Tab` brings them back.
 	void togglePanes();
@@ -255,6 +256,8 @@ private:
 	ColourPane m_colour;
 	ftxui::Box m_sideBox{}; ///< the right column (clicks there skip the image)
 	ftxui::Box m_leftBox{}; ///< the left column
+	int m_dragDivider = 0;  ///< being dragged: 1 = left column's, 2 = right's
+	bool m_dragFiles = false; ///< the files pane's title is being dragged
 	struct HiddenPanes
 	{
 		bool m_meta = false, m_files = false, m_inspector = false,

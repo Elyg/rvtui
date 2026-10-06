@@ -56,13 +56,17 @@ Element FilesPane::render()
 	m_cursor = std::clamp(m_cursor, -1, std::max(0, n - 1));
 	// Annotation line counts on the right; `l` goes into a row's lines.
 	auto count = [](int lines)
-	{ return text(lines ? fmt::format(" {} ", lines) : "") | dim; };
+	{ return lines ? fmt::format(" {} ", lines) : std::string(); };
+	// What a row has for its name: the column less the scroll indicator.
+	// Names are cut to fit it, as a row too wide makes ftxui squeeze all of
+	// its cells (the numbers vanished).
+	const int width = m_state.leftPanelWidth() - 1;
 	Elements rows;
 	{
-		Element row =
-		    hbox({text("      global") | (ann.global().empty() ? dim : nothing),
-		          filler(),
-		          count(AnnotationsPane::lineCount(&ann.global()))});
+		Element row = hbox(
+		    {text("      global") | (ann.global().empty() ? dim : nothing),
+		     filler(),
+		     text(count(AnnotationsPane::lineCount(&ann.global()))) | dim});
 		if(focus && m_cursor == -1)
 		{
 			row = row | inverted | ftxui::focus;
@@ -72,17 +76,24 @@ Element FilesPane::render()
 	for(int i = 0; i < n; ++i)
 	{
 		const bool shown = i == m_state.m_current;
+		const std::string num = fmt::format(" {:>2} ", i + 1);
+		const std::string lines = count(
+		    AnnotationsPane::lineCount(m_state.sourceAnnotations(ann, i)));
+		// The middle goes: these often share a long prefix.
+		const int room =
+		    std::max(1,
+		             width - static_cast<int>(num.size() + 2 + lines.size()));
 		Element row = hbox({
-		    text(fmt::format(" {:>2} ", i + 1)) | dim,
+		    text(num) | dim,
 		    text(shown ? "▶ " : "  ") | color(Color::Cyan),
 		    // Frames of an expanded sequence: magenta, as in the browser.
-		    text(sources[i].m_entry.m_name) |
+		    text(ui::ellipsizeMiddle(sources[i].m_entry.m_name, room)) |
 		        (shown ? color(Color::Cyan) | bold
 		         : !sources[i].m_entry.m_expandedFrom.empty()
 		             ? color(Color::Magenta)
 		             : nothing),
 		    filler(),
-		    count(AnnotationsPane::lineCount(m_state.sourceAnnotations(ann, i))),
+		    text(lines) | dim,
 		});
 		if(focus && i == m_cursor)
 		{
@@ -90,12 +101,11 @@ Element FilesPane::render()
 		}
 		rows.push_back(row);
 	}
-	constexpr int MAX_ROWS = 10;
 	return vbox({
-	           text(ui::paneTitle("─[3]─Files", leftPanelWidth())) |
+	           text(ui::paneTitle("─[3]─Files", m_state.leftPanelWidth())) |
 	               (focus ? color(Color::Green) | bold : dim),
 	           vbox(std::move(rows)) | vscroll_indicator | yframe |
-	               size(HEIGHT, LESS_THAN, MAX_ROWS),
+	               size(HEIGHT, LESS_THAN, m_rows),
 	           focus ? ui::paneHints("", {{"l", "text"}, {"D", "clear all"}})
 	                 : ui::paneHints("", {{"3", "focus"}}),
 	       }) |

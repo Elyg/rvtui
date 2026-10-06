@@ -12,31 +12,38 @@ int SheetLayout::tileAt(double x, double y) const
 	{
 		return -1;
 	}
-	const int c = static_cast<int>(x / m_tileW);
-	const int r = static_cast<int>(y / m_tileH);
-	if(c >= m_cols || r >= m_rows)
+	const int pitchX = m_tileW + m_gapX, pitchY = m_tileH + m_gapY;
+	const int c = static_cast<int>(x / pitchX);
+	const int r = static_cast<int>(y / pitchY);
+	if(c >= m_cols || r >= m_rows || x - c * pitchX >= m_tileW ||
+	   y - r * pitchY >= m_tileH)
 	{
-		return -1;
+		return -1; // past the sheet, or in a gap
 	}
 	const int i = r * m_cols + c;
 	return i < m_count ? i : -1;
 }
 
-SheetLayout layoutSheet(const std::vector<std::pair<double, double>>& frames,
-                        int areaW,
-                        int areaH,
-                        double pxX,
-                        double pxY,
-                        int maxVisible)
+namespace
+{
+
+// layoutSheet() with tiles `gapX` x `gapY` cells apart.
+SheetLayout layoutWithGaps(const std::vector<std::pair<double, double>>& frames,
+                           int areaW,
+                           int areaH,
+                           double pxX,
+                           double pxY,
+                           int maxVisible,
+                           int gapX,
+                           int gapY)
 {
 	SheetLayout l;
 	l.m_count = static_cast<int>(frames.size());
-	if(l.m_count == 0)
-	{
-		return l;
-	}
-	areaW = std::max(1, areaW);
-	areaH = std::max(1, areaH);
+	l.m_gapX = gapX;
+	l.m_gapY = gapY;
+	// The cells c tiles share along an axis, less the gaps between them.
+	auto room = [](int area, int c, int gap)
+	{ return std::max(c, area - (c - 1) * gap); };
 	// Past maxVisible, size the tiles as if only that many had to fit; the
 	// rest go below, off screen.
 	const int shown = std::clamp(l.m_count, 1, std::max(1, maxVisible));
@@ -49,7 +56,8 @@ SheetLayout layoutSheet(const std::vector<std::pair<double, double>>& frames,
 	for(int c = 1; c <= shown; ++c)
 	{
 		const int r = (shown + c - 1) / c;
-		const double boxW = areaW * pxX / c, boxH = areaH * pxY / r;
+		const double boxW = room(areaW, c, l.m_gapX) * pxX / c;
+		const double boxH = room(areaH, r, l.m_gapY) * pxY / r;
 		double area = 0;
 		for(const auto& [w, h] : sample)
 		{
@@ -63,7 +71,9 @@ SheetLayout layoutSheet(const std::vector<std::pair<double, double>>& frames,
 		}
 	}
 	const int shownRows = (shown + l.m_cols - 1) / l.m_cols;
-	const double boxW = areaW * pxX / l.m_cols, boxH = areaH * pxY / shownRows;
+	const int roomW = room(areaW, l.m_cols, l.m_gapX);
+	const int roomH = room(areaH, shownRows, l.m_gapY);
+	const double boxW = roomW * pxX / l.m_cols, boxH = roomH * pxY / shownRows;
 	// Shrink the shared box to the largest image actually drawn in it, so
 	// neighbours nearly touch.
 	double usedW = 1, usedH = 1;
@@ -73,15 +83,59 @@ SheetLayout layoutSheet(const std::vector<std::pair<double, double>>& frames,
 		usedW = std::max(usedW, sc * w);
 		usedH = std::max(usedH, sc * h);
 	}
-	l.m_tileW = std::clamp(static_cast<int>(usedW / pxX), 1, areaW / l.m_cols);
-	l.m_tileH = std::clamp(static_cast<int>(usedH / pxY), 1, areaH / shownRows);
+	l.m_tileW = std::clamp(static_cast<int>(usedW / pxX), 1, roomW / l.m_cols);
+	l.m_tileH = std::clamp(static_cast<int>(usedH / pxY), 1, roomH / shownRows);
 	l.m_rows = (l.m_count + l.m_cols - 1) / l.m_cols;
 	return l;
 }
 
+} // namespace
+
+SheetLayout layoutSheet(const std::vector<std::pair<double, double>>& frames,
+                        int areaW,
+                        int areaH,
+                        double pxX,
+                        double pxY,
+                        int maxVisible)
+{
+	if(frames.empty())
+	{
+		return {};
+	}
+	areaW = std::max(1, areaW);
+	areaH = std::max(1, areaH);
+	// Tiles apart by a cell row, and by as many columns as come closest to
+	// it in pixels, so the gaps look alike both ways...
+	const int gapY = 1;
+	const int gapX = std::max(1, static_cast<int>(std::lround(pxY / pxX)));
+	SheetLayout l =
+	    layoutWithGaps(frames, areaW, areaH, pxX, pxY, maxVisible, gapX, gapY);
+	// ...while that stays thin beside them. Tiny tiles (a long sequence)
+	// touch: a gap would take much of each, and fit more of them on screen
+	// than kitty has image ids for (see MAX_VISIBLE_TILES).
+	constexpr int MIN_GAPS_PER_TILE = 6;
+	if(l.m_tileW < MIN_GAPS_PER_TILE * gapX ||
+	   l.m_tileH < MIN_GAPS_PER_TILE * gapY)
+	{
+		l = layoutWithGaps(frames, areaW, areaH, pxX, pxY, maxVisible, 0, 0);
+	}
+	return l;
+}
+
+namespace
+{
+
+// See MIN_SHEET_ZOOM.
+double minSheetZoom(const SheetLayout& l, SheetArea a)
+{
+	return l.width() <= a.m_w && l.height() <= a.m_h ? MIN_SHEET_ZOOM : 1.0;
+}
+
+} // namespace
+
 void clampSheetView(SheetView& v, const SheetLayout& l, SheetArea a)
 {
-	v.m_zoom = std::clamp(v.m_zoom, 1.0, MAX_SHEET_ZOOM);
+	v.m_zoom = std::clamp(v.m_zoom, minSheetZoom(l, a), MAX_SHEET_ZOOM);
 	auto axis = [](double& c, double sheet, double area, double zoom)
 	{
 		const double half = area / (2 * zoom); // sheet cells either side
@@ -115,7 +169,12 @@ void zoomSheetView(SheetView& v,
                    double ay)
 {
 	const auto [px, py] = sheetPointAt(v, a, ax, ay);
-	v.m_zoom = std::clamp(v.m_zoom * factor, 1.0, MAX_SHEET_ZOOM);
+	v.m_zoom =
+	    std::clamp(v.m_zoom * factor, minSheetZoom(l, a), MAX_SHEET_ZOOM);
+	if(std::abs(v.m_zoom - 1.0) < 1e-9)
+	{
+		v.m_zoom = 1.0; // back at fit exactly, steps in and out notwithstanding
+	}
 	v.m_cx = px - (ax - a.m_w / 2.0) / v.m_zoom;
 	v.m_cy = py - (ay - a.m_h / 2.0) / v.m_zoom;
 	clampSheetView(v, l, a);

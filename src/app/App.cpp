@@ -104,6 +104,12 @@ App::App(const AppOptions& opts, ScreenInteractive& screen)
 			const fs::path first = entries.front().m_path;
 			m_browser.openDirectory(first.parent_path(),
 			                        entryForPath(first).m_name);
+			// Several: they are selected (marked) there too, so Enter in the
+			// browser opens the same set again. One is just under the cursor.
+			if(entries.size() > 1)
+			{
+				m_browser.mark(entries);
+			}
 			m_viewer.open(std::move(entries));
 			m_mode = Mode::VIEWER;
 			if(!missing.empty())
@@ -207,6 +213,8 @@ Element App::renderHelp()
 		    row("e", "expand sequence into frames / collapse"),
 		    row(".", "toggle hidden files"),
 		    row("space", "mark (view marked together)"),
+		    row("a", "mark every image here (again: unmark)"),
+		    row("click", "select (double: open) / parent dir"),
 		    row("o", "choose → --chooser-file, quit"),
 		    row("q / Q", "quit"),
 		});
@@ -224,6 +232,7 @@ Element App::renderHelp()
 		    row("t", "tile: all layers, or all marked images"),
 		    row("  +- wheel hjkl", "tile: zoom / pan the sheet (f fit, z 1:1)"),
 		    row("click", "select tile / focus pane"),
+		    row("drag", "column edges: width; files title: height"),
 		    row("Enter (tile)", "open the selected tile"),
 		    row("Ctrl+click", "pick colour (right click works too)"),
 		    text(""),
