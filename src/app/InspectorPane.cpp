@@ -5,11 +5,87 @@
 #include <spdlog/fmt/fmt.h>
 
 #include <algorithm>
+#include <cmath>
 
 using namespace ftxui;
 
 namespace rv
 {
+
+namespace
+{
+
+// NaN / ±inf: black on amber, a warning sign, so a broken value can't pass
+// for a number.
+const Decorator NON_FINITE =
+    bgcolor(Color::RGB(255, 190, 0)) | color(Color::Black) | bold;
+
+// " R      0.001     1.25    0.412": a channel's finite min / max / avg in
+// columns that fit the narrowest right column (32 cells).
+std::string statsRow(const std::string& name, const ChannelStats& s)
+{
+	if(!s.m_count)
+	{
+		return fmt::format(" {:<4.4}{:>9}{:>9}{:>9}", name, "—", "—", "—");
+	}
+	return fmt::format(" {:<4.4}{:>9.3g}{:>9.3g}{:>9.3g}",
+	                   name,
+	                   s.m_min,
+	                   s.m_max,
+	                   s.m_mean);
+}
+
+// A formatted value row ("nan", "-nan", "inf", "-inf" from fmt).
+bool nonFiniteText(const std::string& v)
+{
+	return v.find("nan") != std::string::npos || v.ends_with("inf");
+}
+
+} // namespace
+
+Decorator nonFiniteStyle()
+{
+	return NON_FINITE;
+}
+
+std::string nonFiniteSummary(const LayerImage& img)
+{
+	if(img.m_nanPixels && img.m_infPixels)
+	{
+		return fmt::format("{} NaN · {} inf px",
+		                   img.m_nanPixels,
+		                   img.m_infPixels);
+	}
+	return img.m_nanPixels   ? fmt::format("{} NaN px", img.m_nanPixels)
+	       : img.m_infPixels ? fmt::format("{} inf px", img.m_infPixels)
+	                         : "";
+}
+
+std::string nonFiniteLabel(std::initializer_list<const Sample*> samples)
+{
+	bool nan = false, inf = false;
+	auto check = [&](float v)
+	{
+		nan |= std::isnan(v);
+		inf |= std::isinf(v);
+	};
+	for(const Sample* s : samples)
+	{
+		if(!s)
+		{
+			continue;
+		}
+		for(float v : s->m_rgba)
+		{
+			check(v);
+		}
+		for(const auto& [name, v] : s->m_values)
+		{
+			check(v);
+		}
+	}
+	return nan && inf ? "NaN inf" : nan ? "NaN" : inf ? "inf" : "";
+}
 
 // "(0.500, 0.250, 0.125, 1.000)", each number in its channel's colour (as
 // the HUD's R G B A letters). Alpha is always shown; dim 1.000 when the
@@ -25,8 +101,11 @@ Element rgbaValues(const Sample& s)
 			parts.push_back(text(", ") | dim);
 		}
 		const bool implied = c == 3 && !s.m_hasAlpha;
-		parts.push_back(text(fmt::format("{:.3f}", s.m_rgba[c])) |
-		                (implied ? dim : color(colors[c])));
+		const float v = s.m_rgba[c];
+		parts.push_back(text(fmt::format("{:.3f}", v)) |
+		                (!std::isfinite(v) ? NON_FINITE
+		                 : implied         ? dim
+		                                   : color(colors[c])));
 	}
 	parts.push_back(text(")") | dim);
 	return hbox(std::move(parts));
@@ -68,7 +147,7 @@ InspectorPane::InspectorPane(ViewerState& state, AppContext& ctx)
 {
 }
 
-Element InspectorPane::render(const Sample& s)
+Element InspectorPane::render(const Sample& s, const LayerImage* shown)
 {
 	using St = Sample::State;
 	const bool focus = focused();
@@ -80,10 +159,35 @@ Element InspectorPane::render(const Sample& s)
 	auto valueRow = [](const std::string& name, Element value)
 	{ return hbox({text(" " + name) | bold | size(WIDTH, EQUAL, 10), value}); };
 
-	Elements rows{text(ui::paneTitle("─[4]─Inspector",
-	                                 m_state.sidePanelWidth())) |
-	                  (focus ? color(Color::Green) | bold : dim),
-	              text(" hover") | bold | color(Color::Yellow)};
+	// Title, with a badge when the hovered or picked pixel holds NaN / inf.
+	const Decorator titleStyle = focus ? color(Color::Green) | bold : dim;
+	const std::string bad =
+	    nonFiniteLabel({&s, m_state.m_picked ? &*m_state.m_picked : nullptr});
+	Element title;
+	if(bad.empty())
+	{
+		title =
+		    text(ui::paneTitle("─[4]─Inspector", m_state.sidePanelWidth())) |
+		    titleStyle;
+	}
+	else
+	{
+		const std::string head = "─[4]─Inspector─";
+		const std::string badge = " " + bad + " ";
+		const int rest =
+		    m_state.sidePanelWidth() - string_width(head) - string_width(badge);
+		title = hbox({text(head) | titleStyle,
+		              text(badge) | NON_FINITE,
+		              text(ui::paneTitle("", rest)) | titleStyle});
+	}
+	Elements rows{title};
+	// The whole layer: how many pixels are broken, wherever they are.
+	if(const std::string sum = shown ? nonFiniteSummary(*shown) : "";
+	   !sum.empty())
+	{
+		rows.push_back(hbox({text(" "), text(" " + sum + " ") | NON_FINITE}));
+	}
+	rows.push_back(text(" hover") | bold | color(Color::Yellow));
 
 	// Live readout under the mouse.
 	switch(s.m_state)
@@ -120,7 +224,8 @@ Element InspectorPane::render(const Sample& s)
 			Element v = name == "rgba"    ? rgbaValues(*picked)
 			            : name == "pixel" ? text(sampleCoord(*picked))
 			            : name == "layer" ? text(value) | color(Color::Cyan)
-			                              : text(value);
+			            : nonFiniteText(value) ? text(value) | NON_FINITE
+			                                   : text(value);
 			Element row = valueRow(name, v);
 			if(focus && static_cast<int>(i) == m_cursor)
 			{
@@ -133,11 +238,26 @@ Element InspectorPane::render(const Sample& s)
 	{
 		rows.push_back(text(" ctrl+click the image") | dim);
 	}
-	rows.push_back(focus ? ui::paneHints("",
-	                                     {{"y", "copy line"},
-	                                      {"Y", "copy value"},
-	                                      {"4", "close"}})
-	                     : ui::paneHints("", {{"4", "focus"}}));
+	// The whole layer on screen: each channel's range and mean (NaN / inf
+	// left out; the count under the title says how many there are).
+	if(shown && shown->m_stats.size() == shown->m_channelNames.size() &&
+	   !shown->m_stats.empty())
+	{
+		rows.push_back(separatorLight());
+		rows.push_back(hbox(
+		    {text(" layer") | bold | color(Color::Yellow),
+		     text(fmt::format("{:>8}{:>9}{:>9}", "min", "max", "avg")) | dim}));
+		for(size_t c = 0; c < shown->m_stats.size(); ++c)
+		{
+			rows.push_back(
+			    text(statsRow(shown->m_channelNames[c], shown->m_stats[c])));
+		}
+	}
+	rows.push_back(
+	    focus
+	        ? ui::paneHints("",
+	                        {{"y/Y", "copy"}, {"x", "unpick"}, {"4", "close"}})
+	        : ui::paneHints("", {{"4", "focus"}}));
 	return vbox(std::move(rows)) | reflect(m_box);
 }
 
@@ -181,6 +301,15 @@ bool InspectorPane::event(const Event& e)
 		const auto items = sampleItems(*picked);
 		const auto& [name, value] = items[std::clamp(m_cursor, 0, n - 1)];
 		m_ctx.copyText(ch("y") ? name + ": " + value : value);
+	}
+	else if(ch("x"))
+	{
+		if(picked)
+		{
+			m_state.m_picked.reset(); // and with it the ring and HUD swatch
+			m_cursor = 0;
+			m_ctx.m_message = "pick cleared";
+		}
 	}
 	else if(ch("1") || ch("q") || ch("h") || e == Event::Escape)
 	{

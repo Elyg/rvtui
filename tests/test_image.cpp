@@ -14,6 +14,7 @@
 #include <ImfPartType.h>
 #include <ImfTileDescriptionAttribute.h>
 #include <ImfTiledOutputFile.h>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -364,6 +365,125 @@ TEST(Render, SelectedTileGetsADashedInsetFrame)
 	EXPECT_EQ(px(1, 0)[0], rv::SELECTED_RGB[0]); // on the edge, dash on
 	EXPECT_EQ(px(5, 0)[0], 0);                   // dash off
 	EXPECT_EQ(px(8, 8)[0], 0);                   // the image itself
+}
+
+TEST(Render, RingsTheMarkedPixelInRed)
+{
+	rv::LayerImage img;
+	img.m_dataWindow = img.m_displayWindow = {0, 0, 3, 3}; // 4x4
+	img.m_width = img.m_height = 4;
+	img.m_channelNames = {"R", "G", "B"};
+	img.m_planes.assign(3, rv::Plane(std::vector<float>(16, 0.0f)));
+	rv::DisplayParams d;
+	d.m_srgb = false;
+	d.m_marker = std::pair(1, 1);
+	rv::ViewParams v;
+	v.m_fit = false;
+	v.m_zoom = 8; // pixel (1, 1) covers output 8..15
+	v.m_centerX = v.m_centerY = 2;
+	auto out = rv::renderLayer(img, 32, 32, v, d);
+	auto red = [&](int x, int y) { return out.m_pixels[(y * 32 + x) * 4]; };
+	EXPECT_EQ(red(7, 10), rv::MARKER_RGB[0]); // just outside it
+	EXPECT_EQ(red(16, 10), rv::MARKER_RGB[0]);
+	EXPECT_EQ(red(10, 7), rv::MARKER_RGB[0]);
+	EXPECT_EQ(red(10, 10), 0); // the pixel itself shows, no dot
+	EXPECT_EQ(red(11, 11), 0);
+	EXPECT_EQ(red(6, 10), 0);
+
+	// Zoomed out (fit into 8x8: the pixel is output 2..3), the ring grows
+	// about it to show, and a dot marks the pixel in its middle.
+	out = rv::renderLayer(img, 8, 8, {}, d);
+	auto red8 = [&](int x, int y) { return out.m_pixels[(y * 8 + x) * 4]; };
+	EXPECT_EQ(red8(6, 3), rv::MARKER_RGB[0]); // the ring
+	EXPECT_EQ(red8(3, 3), rv::MARKER_RGB[0]); // the dot
+	EXPECT_EQ(red8(2, 2), 0);                 // between them
+}
+
+TEST(LayerImage, ScanCountsNanAndInfAndTakesFiniteStats)
+{
+	rv::LayerImage img;
+	img.m_width = 4;
+	img.m_height = 2;
+	rv::Plane r = rv::Plane::floats(8), g = rv::Plane::halves(8);
+	r.set(0, std::nanf(""));
+	g.set(0, INFINITY); // same pixel: counts as both
+	r.set(3, -INFINITY);
+	g.set(5, std::nanf(""));
+	g.set(6, std::nanf(""));
+	r.set(6, std::nanf("")); // NaN in two channels: one pixel
+	img.m_planes = {r, g};
+	rv::scanLayer(img);
+	EXPECT_EQ(img.m_nanPixels, 3);
+	EXPECT_EQ(img.m_infPixels, 2);
+	// Stats over the finite values only: r is 0 but for 5 of its 8.
+	ASSERT_EQ(img.m_stats.size(), 2u);
+	EXPECT_EQ(img.m_stats[0].m_count, 5);
+	EXPECT_EQ(img.m_stats[0].m_min, 0.0f);
+	EXPECT_EQ(img.m_stats[0].m_max, 0.0f);
+	EXPECT_EQ(img.m_stats[1].m_count, 5);
+	// A reduced copy keeps the full-resolution counts.
+	const auto half = rv::downsample(img, 2);
+	EXPECT_EQ(half.m_nanPixels, 3);
+	EXPECT_EQ(half.m_infPixels, 2);
+	EXPECT_EQ(half.m_stats.size(), 2u);
+	// Loading counts too.
+	auto p = writeExr("finite.exr", {"R", "G", "B"}, 4, 4);
+	img = rv::loadLayer(rv::probeImage(p), 0);
+	EXPECT_EQ(img.m_nanPixels, 0);
+	EXPECT_EQ(img.m_infPixels, 0);
+	ASSERT_EQ(img.m_stats.size(), 3u);
+	EXPECT_EQ(img.m_stats[0].m_count, 16);
+	float lo = INFINITY, hi = -INFINITY;
+	double sum = 0;
+	for(int y = 0; y < 4; ++y)
+	{
+		for(int x = 0; x < 4; ++x)
+		{
+			const float v = *img.at(0, x, y);
+			lo = std::min(lo, v);
+			hi = std::max(hi, v);
+			sum += v;
+		}
+	}
+	EXPECT_EQ(img.m_stats[0].m_min, lo);
+	EXPECT_EQ(img.m_stats[0].m_max, hi);
+	EXPECT_NEAR(img.m_stats[0].m_mean, sum / 16, 1e-6);
+}
+
+TEST(Render, BangPaintsNanAndInfPixels)
+{
+	rv::LayerImage img;
+	img.m_dataWindow = img.m_displayWindow = {0, 0, 3, 0}; // 4x1
+	img.m_width = 4;
+	img.m_height = 1;
+	img.m_channelNames = {"R", "G", "B"};
+	img.m_planes.assign(3, rv::Plane(std::vector<float>(4, 0.5f)));
+	img.m_planes[0].set(1, std::nanf(""));
+	img.m_planes[2].set(2, -INFINITY);
+	rv::DisplayParams d;
+	d.m_srgb = false;
+	rv::ViewParams v;
+	v.m_fit = false;
+	v.m_zoom = 1;
+	v.m_centerX = 2;
+	v.m_centerY = 0.5;
+	auto px = [](const rv::Rgba8Image& o, int x)
+	{
+		const uint8_t* p = &o.m_pixels[static_cast<size_t>(x) * 4];
+		return std::array<int, 3>{p[0], p[1], p[2]};
+	};
+	auto out = rv::renderLayer(img, 4, 1, v, d); // off: NaN / inf as 0
+	EXPECT_EQ(px(out, 1)[0], 0);
+	EXPECT_EQ(px(out, 2)[2], 0);
+	d.m_showNonFinite = true;
+	out = rv::renderLayer(img, 4, 1, v, d);
+	EXPECT_EQ(px(out, 0), (std::array<int, 3>{128, 128, 128}));
+	EXPECT_EQ(px(out, 1), (std::array<int, 3>{255, 0, 255})); // NaN
+	EXPECT_EQ(px(out, 2), (std::array<int, 3>{0, 255, 255})); // inf
+	// Averaged when zoomed out: one NaN among its pixels still shows.
+	v.m_zoom = 0.5;
+	out = rv::renderLayer(img, 2, 1, v, d);
+	EXPECT_EQ(px(out, 0), (std::array<int, 3>{255, 0, 255}));
 }
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION

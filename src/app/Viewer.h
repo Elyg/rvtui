@@ -143,6 +143,18 @@ private:
 	/// The display settings for frame `path` of source `source`: the shared
 	/// ones, with that image's OCIO transform (when a config is in use).
 	DisplayParams displayFor(int source, const std::filesystem::path& path);
+	/// The layer the HUD and inspector describe: on screen in the single
+	/// view, the selected tile's in a sheet. Null until drawn.
+	LayerImagePtr describedImage(const ImageInfoPtr& info) const;
+	/// The picked pixel, ringed in red while the inspector is open.
+	std::optional<std::pair<int, int>> pickedMarker() const
+	{
+		if(!m_inspector.isOpen() || !m_state.m_picked)
+		{
+			return std::nullopt;
+		}
+		return std::pair(m_state.m_picked->m_x, m_state.m_picked->m_y);
+	}
 	/// Zoom (terminal px per image px) `slot` shows its image at; nullopt
 	/// when fitted.
 	std::optional<double> zoomOf(const ImageSlot& slot) const;
@@ -258,6 +270,8 @@ private:
 	ftxui::Box m_leftBox{}; ///< the left column
 	int m_dragDivider = 0;  ///< being dragged: 1 = left column's, 2 = right's
 	bool m_dragFiles = false; ///< the files pane's title is being dragged
+	/// Panning with a left / middle drag: where the mouse last was.
+	std::optional<std::pair<int, int>> m_dragPan;
 	struct HiddenPanes
 	{
 		bool m_meta = false, m_files = false, m_inspector = false,

@@ -33,8 +33,10 @@ LayerImage loadLayer(const ImageInfo& info, int layerIndex)
 	{
 		throw LoadError("layer index out of range");
 	}
-	return info.m_format == "exr" ? loadExrLayer(info, layerIndex)
-	                              : loadStbLayer(info, layerIndex);
+	LayerImage img = info.m_format == "exr" ? loadExrLayer(info, layerIndex)
+	                                        : loadStbLayer(info, layerIndex);
+	scanLayer(img);
+	return img;
 }
 
 } // namespace rv

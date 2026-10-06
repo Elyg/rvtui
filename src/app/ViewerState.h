@@ -55,6 +55,7 @@ struct Sample
 		OK
 	};
 	State m_state = State::NONE;
+	std::filesystem::path m_path; ///< the frame read
 	int m_x = 0, m_y = 0;
 	bool m_exact = false; ///< full resolution (else what is on screen, ≈)
 	std::string m_layer;

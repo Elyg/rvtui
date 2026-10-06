@@ -927,6 +927,32 @@ bool Viewer::mouseEvent(Event e, const ImageInfoPtr& info)
 		}
 		return true;
 	}
+	// Drag the image (or the sheet) with the left or middle button to pan,
+	// as hjkl do: it follows the mouse.
+	if(m_dragPan)
+	{
+		if(m.motion == Mouse::Released)
+		{
+			m_dragPan.reset();
+		}
+		else if(m.motion == Mouse::Moved)
+		{
+			const int dx = m.x - m_dragPan->first, dy = m.y - m_dragPan->second;
+			if(dx || dy)
+			{
+				if(m_tile)
+				{
+					panSheet(-dx, -dy, info);
+				}
+				else
+				{
+					pan(-dx, -dy);
+				}
+			}
+			m_dragPan = std::pair(m.x, m.y);
+		}
+		return true;
+	}
 	const bool overInfo = m_meta.isOpen() && m_meta.contains(m.x, m.y);
 	const bool overFiles = m_files.isOpen() && m_files.contains(m.x, m.y);
 	const bool overSide = (rightPanelOpen() && inside(m_sideBox, m.x, m.y)) ||
@@ -962,6 +988,16 @@ bool Viewer::mouseEvent(Event e, const ImageInfoPtr& info)
 	const bool pressed = m.motion == Mouse::Pressed;
 	const bool pick = pressed && ((m.button == Mouse::Left && m.control) ||
 	                              m.button == Mouse::Right);
+	if(pressed && !overSide &&
+	   ((m.button == Mouse::Left && !m.control) || m.button == Mouse::Middle))
+	{
+		m_dragPan = std::pair(m.x, m.y);
+		if(m.button == Mouse::Middle)
+		{
+			m_state.m_focus = Focus::IMAGE;
+			return true;
+		}
+	}
 	if(!pressed || (m.button != Mouse::Left && !pick))
 	{
 		return m_inspector.isOpen(); // redraw for the readout on mouse move
@@ -1152,6 +1188,13 @@ bool Viewer::keyEvent(const Event& e, const ImageInfoPtr& info)
 	else if(ch("0"))
 	{
 		m_state.m_disp = DisplayParams{};
+	}
+	else if(ch("!"))
+	{
+		auto& on = m_state.m_disp.m_showNonFinite;
+		on = !on;
+		m_ctx.m_message = on ? "NaN / inf shown: NaN magenta, inf cyan"
+		                     : "NaN / inf shown as black";
 	}
 	else if(ch("+") || ch("=") || ch("-") || ch("_"))
 	{
@@ -1386,6 +1429,10 @@ Element Viewer::renderHud(const ImageInfoPtr& info)
 	{
 		disp += m_state.m_disp.m_srgb ? " sRGB" : " raw";
 	}
+	if(m_state.m_disp.m_showNonFinite)
+	{
+		disp += " !NaN";
+	}
 	if(!disp.empty())
 	{
 		parts.push_back(text(disp + " ") | color(Color::Yellow));
@@ -1416,6 +1463,15 @@ Element Viewer::renderHud(const ImageInfoPtr& info)
 		parts.push_back(text(" "));
 	}
 	parts.push_back(filler());
+	// The layer has broken pixels: say so, inspector open or not.
+	if(const LayerImagePtr shown = describedImage(info))
+	{
+		if(const std::string sum = nonFiniteSummary(*shown); !sum.empty())
+		{
+			parts.push_back(text(" " + sum + " ") | nonFiniteStyle());
+			parts.push_back(text(" "));
+		}
+	}
 	if(m_tile)
 	{
 		parts.push_back(text(" TILE ") | inverted);
@@ -1426,6 +1482,16 @@ Element Viewer::renderHud(const ImageInfoPtr& info)
 		                color(Color::Yellow));
 	}
 	return hbox(std::move(parts)) | bgcolor(Color::GrayDark);
+}
+
+LayerImagePtr Viewer::describedImage(const ImageInfoPtr& info) const
+{
+	if(!m_tile)
+	{
+		return m_viewSlot->shown();
+	}
+	const auto it = m_tiles.find(selectedTile(info));
+	return it != m_tiles.end() ? it->second.m_slot->shown() : nullptr;
 }
 
 Sample Viewer::sampleAt(int cellX, int cellY)
@@ -1463,6 +1529,7 @@ Sample Viewer::sampleAt(int cellX, int cellY)
 		return out;
 	}
 	out.m_state = Sample::State::LOADING;
+	out.m_path = path;
 	out.m_layer = layer;
 	out.m_x = static_cast<int>(std::floor(coord->first));
 	out.m_y = static_cast<int>(std::floor(coord->second));
@@ -1645,6 +1712,11 @@ Element Viewer::renderTiles(const ImageInfoPtr& info, int width)
 				disp.m_outlines = Outlines::FRAME;
 			}
 			disp.m_selected = i == sel && n > 1 && m_tileSelection;
+			if(m_state.m_picked && m_state.m_picked->m_path == ref.m_path &&
+			   m_state.m_picked->m_layer == ref.m_layer)
+			{
+				disp.m_marker = pickedMarker();
+			}
 			img = slot.element(
 			    li,
 			    view,
@@ -1779,11 +1851,14 @@ Element Viewer::render()
 				prefetchFrame((m_state.m_frame + i) % n);
 			}
 		}
+		// The main view rings the picked pixel whichever image it came from.
+		DisplayParams disp = displayFor(m_state.m_current, path);
+		disp.m_marker = pickedMarker();
 		main =
 		    img ? m_viewSlot->element(
 		              img,
 		              m_state.m_view,
-		              displayFor(m_state.m_current, path),
+		              disp,
 		              overlayText({&m_ctx.m_ann.global(),
 		                           m_state.sourceAnnotations(m_ctx.m_ann,
 		                                                     m_state.m_current)},
@@ -1856,7 +1931,8 @@ Element Viewer::render()
 		if(m_inspector.isOpen())
 		{
 			add(m_inspector.render(info ? sampleAt(m_mouseX, m_mouseY)
-			                            : Sample{}));
+			                            : Sample{},
+			                       describedImage(info).get()));
 		}
 		if(m_meta.isOpen())
 		{

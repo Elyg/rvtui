@@ -318,6 +318,41 @@ TEST_F(ViewerTest, ZoomStepsBy125PercentAndPanMovesByCells)
 	EXPECT_TRUE(state().m_view.m_fit);
 }
 
+TEST_F(ViewerTest, LeftOrMiddleDragPansLikeHjkl)
+{
+	m_v.open({layersEntry()});
+	draw();
+	press(key("z")); // 1:1: a cell is 1x2 image px
+	auto mouse =
+	    [&](ftxui::Mouse::Button b, int x, int y, ftxui::Mouse::Motion motion)
+	{
+		ftxui::Mouse m;
+		m.button = b;
+		m.motion = motion;
+		m.x = x;
+		m.y = y;
+		press(Event::Mouse("", m));
+	};
+	const double cx = state().m_view.m_centerX;
+	const double cy = state().m_view.m_centerY;
+	// The image follows the mouse: dragging right looks further left.
+	mouse(ftxui::Mouse::Left, 40, 12, ftxui::Mouse::Pressed);
+	mouse(ftxui::Mouse::Left, 44, 13, ftxui::Mouse::Moved);
+	mouse(ftxui::Mouse::Left, 44, 13, ftxui::Mouse::Released);
+	EXPECT_NEAR(state().m_view.m_centerX, cx - 4, 1e-9);
+	EXPECT_NEAR(state().m_view.m_centerY, cy - 2, 1e-9);
+	mouse(ftxui::Mouse::Middle, 40, 12, ftxui::Mouse::Pressed);
+	mouse(ftxui::Mouse::Middle, 30, 12, ftxui::Mouse::Moved);
+	mouse(ftxui::Mouse::Middle, 30, 12, ftxui::Mouse::Released);
+	EXPECT_NEAR(state().m_view.m_centerX, cx - 4 + 10, 1e-9);
+	// Released: moving leaves the view be.
+	ftxui::Mouse move;
+	move.button = ftxui::Mouse::None;
+	move.motion = ftxui::Mouse::Moved;
+	(void)m_v.event(Event::Mouse("", move));
+	EXPECT_NEAR(state().m_view.m_centerX, cx + 6, 1e-9);
+}
+
 TEST_F(ViewerTest, RightClickPicksAPixelUntilReopened)
 {
 	m_v.open({layersEntry()});

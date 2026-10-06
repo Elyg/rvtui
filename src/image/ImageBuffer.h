@@ -207,6 +207,14 @@ private:
 	bool m_isHalf = false;
 };
 
+/// One channel's finite values (NaN / ±inf left out): range and mean.
+struct ChannelStats
+{
+	float m_min = 0, m_max = 0;
+	double m_mean = 0;
+	int64_t m_count = 0; ///< finite values; 0 = none, the rest meaningless
+};
+
 /// Decoded pixels of one layer, planar (see Plane), covering `dataWindow`.
 /// `reduce` > 1 means the planes were box-downsampled by that factor (used for
 /// flipbook caching); coordinates in `dataWindow`/`displayWindow` are always
@@ -221,6 +229,11 @@ struct LayerImage
 	std::vector<std::string>
 	    m_channelNames; ///< short names, same order as planes
 	std::vector<Plane> m_planes;
+	/// Pixels with a NaN / an ±inf in any channel, and each plane's stats:
+	/// from full resolution on load (scanLayer); a reduced copy keeps its
+	/// source's.
+	int64_t m_nanPixels = 0, m_infPixels = 0;
+	std::vector<ChannelStats> m_stats; ///< per plane; empty until scanned
 
 	Box2i fitBounds() const // frame plus overscan, see ImageInfo
 	{
@@ -255,6 +268,9 @@ struct LayerImage
 };
 
 using LayerImagePtr = std::shared_ptr<const LayerImage>;
+
+/// Fill m_nanPixels / m_infPixels and m_stats from the planes.
+void scanLayer(LayerImage& img);
 
 /// Box-downsample by an integer factor (factor 1 returns a copy).
 LayerImage downsample(const LayerImage& src, int factor);

@@ -287,6 +287,65 @@ void drawBoxOutline(Rgba8Image& out,
 	}
 }
 
+// A solid ring just outside image pixel (px, py), so the pixel itself stays
+// visible when zoomed in. Zoomed out, where the pixel is a speck, the ring
+// grows about it to a size that shows (relative to the output, so in
+// half-blocks and kitty pixels alike), and thickens with it; a dot in its
+// middle then marks which of the pixels inside it is the one.
+void drawMarker(Rgba8Image& out, const ViewMapping& m, int px, int py)
+{
+	auto toX = [&](double ix)
+	{ return static_cast<int>(std::floor((ix - m.m_originX) * m.m_scale)); };
+	auto toY = [&](double iy)
+	{ return static_cast<int>(std::floor((iy - m.m_originY) * m.m_scale)); };
+	auto put = [&](int x, int y)
+	{
+		if(x < 0 || y < 0 || x >= out.m_width || y >= out.m_height)
+		{
+			return;
+		}
+		uint8_t* p =
+		    &out.m_pixels[(static_cast<size_t>(y) * out.m_width + x) * 4];
+		p[0] = MARKER_RGB[0];
+		p[1] = MARKER_RGB[1];
+		p[2] = MARKER_RGB[2];
+		p[3] = 255;
+	};
+	const int minSide = std::max(5, std::min(out.m_width, out.m_height) / 40);
+	const int thick = std::max(1, minSide / 10);
+	auto span = [&](int a0, int a1)
+	{
+		const int grow = std::max(0, minSide - (a1 - a0) + 1) / 2;
+		return std::pair(a0 - grow, a1 + grow); // [a0, a1)
+	};
+	const int px0 = toX(px), px1 = toX(px + 1.0);
+	const int py0 = toY(py), py1 = toY(py + 1.0);
+	const auto [x0, x1] = span(px0, px1);
+	const auto [y0, y1] = span(py0, py1);
+	for(int y = y0 - thick; y < y1 + thick; ++y)
+	{
+		for(int x = x0 - thick; x < x1 + thick; ++x)
+		{
+			if(x < x0 || x >= x1 || y < y0 || y >= y1)
+			{
+				put(x, y);
+			}
+		}
+	}
+	if(x0 != px0 || y0 != py0) // grown: the ring holds more than the pixel
+	{
+		const int cx = (px0 + px1) / 2 - thick / 2;
+		const int cy = (py0 + py1) / 2 - thick / 2;
+		for(int y = cy; y < cy + thick; ++y)
+		{
+			for(int x = cx; x < cx + thick; ++x)
+			{
+				put(x, y);
+			}
+		}
+	}
+}
+
 } // namespace
 
 Rgba8Image renderLayer(const LayerImage& img,
@@ -391,6 +450,10 @@ Rgba8Image renderLayer(const LayerImage& img,
 					    {
 						    continue;
 					    }
+					    // Bit 0: a NaN went into this pixel, bit 1: an inf.
+					    int bad = 0;
+					    auto flag = [&bad](float v)
+					    { bad |= std::isnan(v) ? 1 : 2; };
 					    auto sample = [&](const T* p) -> float
 					    {
 						    if(!p)
@@ -402,7 +465,12 @@ Rgba8Image renderLayer(const LayerImage& img,
 							    float v = toFloat(
 							        p[static_cast<size_t>(ry.m_lo) * planeW +
 							          rx.m_lo]);
-							    return std::isfinite(v) ? v : 0.0f;
+							    if(std::isfinite(v))
+							    {
+								    return v;
+							    }
+							    flag(v);
+							    return 0.0f;
 						    }
 						    float sum = 0;
 						    int n = 0;
@@ -418,6 +486,10 @@ Rgba8Image renderLayer(const LayerImage& img,
 								    {
 									    sum += v;
 									    ++n;
+								    }
+								    else
+								    {
+									    flag(v);
 								    }
 							    }
 						    }
@@ -461,9 +533,19 @@ Rgba8Image renderLayer(const LayerImage& img,
 						    ocio->apply(r, g, b);
 					    }
 					    uint8_t* px = dst + static_cast<size_t>(ox) * 4;
-					    px[0] = lut(r);
-					    px[1] = lut(g);
-					    px[2] = lut(b);
+					    if(bad && disp.m_showNonFinite)
+					    {
+						    const uint8_t* c = (bad & 1) ? NAN_RGB : INF_RGB;
+						    px[0] = c[0];
+						    px[1] = c[1];
+						    px[2] = c[2];
+					    }
+					    else
+					    {
+						    px[0] = lut(r);
+						    px[1] = lut(g);
+						    px[2] = lut(b);
+					    }
 					    px[3] = 255;
 				    }
 			    }
@@ -569,6 +651,10 @@ Rgba8Image renderLayer(const LayerImage& img,
 	if(disp.m_selected) // inside the frame: tiles fill their box with it
 	{
 		drawBoxOutline(out, m, frame, SELECTED_RGB, true, true);
+	}
+	if(disp.m_marker)
+	{
+		drawMarker(out, m, disp.m_marker->first, disp.m_marker->second);
 	}
 	return out;
 }

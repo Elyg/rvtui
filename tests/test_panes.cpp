@@ -13,6 +13,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -136,6 +137,9 @@ TEST_F(Panes, InspectorCopiesTheLineOrValue)
 	EXPECT_EQ(m_c.m_ctx.m_message, "copied: pixel: [1, 2]");
 	EXPECT_TRUE(p.event(key("Y")));
 	EXPECT_EQ(m_c.m_ctx.m_message, "copied: [1, 2]");
+	EXPECT_TRUE(p.event(key("x"))); // clears the pick
+	EXPECT_FALSE(m_state.m_picked);
+	EXPECT_EQ(m_c.m_ctx.m_message, "pick cleared");
 }
 
 TEST_F(Panes, InspectorPassesOnViewerKeysAndClosesOnItsNumber)
@@ -152,6 +156,71 @@ TEST_F(Panes, InspectorPassesOnViewerKeysAndClosesOnItsNumber)
 	EXPECT_TRUE(p.event(key("4")));
 	EXPECT_FALSE(p.isOpen());
 	EXPECT_EQ(m_state.m_focus, Focus::IMAGE);
+}
+
+TEST_F(Panes, InspectorFlagsNanAndInf)
+{
+	Sample ok;
+	ok.m_values = {{"R", 0.5f}};
+	Sample nan = ok;
+	nan.m_values.emplace_back("Z", std::nanf(""));
+	Sample inf = ok;
+	inf.m_rgba[1] = -INFINITY;
+	EXPECT_EQ(nonFiniteLabel({&ok, nullptr}), "");
+	EXPECT_EQ(nonFiniteLabel({&nan}), "NaN");
+	EXPECT_EQ(nonFiniteLabel({&ok, &inf}), "inf");
+	EXPECT_EQ(nonFiniteLabel({&nan, &inf}), "NaN inf");
+
+	// The picked pixel's NaN shows as a badge in the [4] title.
+	InspectorPane p(m_state, m_c.m_ctx);
+	nan.m_state = Sample::State::OK;
+	m_state.m_picked = nan;
+	ftxui::Screen screen(60, 30);
+	ftxui::Render(screen, p.render(Sample{}));
+	std::string title;
+	for(int x = 0; x < 21; ++x)
+	{
+		title += screen.at(x, 0);
+	}
+	EXPECT_EQ(title, "─[4]─Inspector─ NaN ─");
+
+	// The whole layer's count, under the title.
+	EXPECT_EQ(nonFiniteSummary(rv::LayerImage{}), "");
+	rv::LayerImage layer;
+	layer.m_nanPixels = 12;
+	EXPECT_EQ(nonFiniteSummary(layer), "12 NaN px");
+	layer.m_infPixels = 3;
+	EXPECT_EQ(nonFiniteSummary(layer), "12 NaN · 3 inf px");
+	m_state.m_picked.reset();
+	ftxui::Render(screen, p.render(Sample{}, &layer));
+	std::string row;
+	for(int x = 0; x < 20; ++x)
+	{
+		row += screen.at(x, 1);
+	}
+	EXPECT_EQ(row, "  12 NaN · 3 inf px ");
+
+	// Per-channel min / max / avg of the layer, at the bottom.
+	layer.m_channelNames = {"R", "Z"};
+	layer.m_stats = {{-0.5f, 2.0f, 0.25, 10}, {}};
+	ftxui::Render(screen, p.render(Sample{}, &layer));
+	auto line = [&](int y)
+	{
+		std::string l;
+		for(int x = 0; x < 32; ++x)
+		{
+			l += screen.at(x, y);
+		}
+		return l;
+	};
+	int at = 0;
+	while(at < 30 && !line(at).starts_with(" layer"))
+	{
+		++at;
+	}
+	EXPECT_EQ(line(at), " layer     min      max      avg");
+	EXPECT_EQ(line(at + 1), " R        -0.5        2     0.25");
+	EXPECT_EQ(line(at + 2), " Z           —        —        —");
 }
 
 // --- metadata ---

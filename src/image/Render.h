@@ -5,6 +5,8 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 
 namespace rv
@@ -45,6 +47,11 @@ struct DisplayParams
 	std::shared_ptr<const ColourTransform> m_ocio;
 	Outlines m_outlines = Outlines::NONE; ///< `w` turns them on
 	bool m_selected = false; ///< tiles: dashed highlight just inside the frame
+	/// `!`: paint pixels holding NaN (NAN_RGB) / ±inf (INF_RGB) in the shown
+	/// channels over the image.
+	bool m_showNonFinite = false;
+	/// Image pixel (x, y) ringed in red: the inspector's picked one.
+	std::optional<std::pair<int, int>> m_marker;
 	bool operator==(const DisplayParams&) const = default;
 };
 
@@ -95,6 +102,12 @@ constexpr uint8_t OUTLINE_GREY = 96;
 constexpr uint8_t DATA_OUTLINE_RGB[3] = {0, 150, 170};
 /// Yellow dashed highlight on the selected tile (the one the panes describe).
 constexpr uint8_t SELECTED_RGB[3] = {230, 200, 60};
+
+/// What `!` paints over NaN / ±inf pixels (NaN wins where both).
+constexpr uint8_t NAN_RGB[3] = {255, 0, 255};
+constexpr uint8_t INF_RGB[3] = {0, 255, 255};
+/// Red of the ring around the marked (picked) pixel, as Nuke's.
+constexpr uint8_t MARKER_RGB[3] = {255, 40, 40};
 
 /// `fitBox` is what fit mode frames: the frame plus overscan (fitBounds()).
 ViewMapping resolveView(const Box2i& fitBox,

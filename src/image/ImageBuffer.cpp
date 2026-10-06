@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <mutex>
 
 namespace rv
 {
@@ -39,6 +41,98 @@ int ImageInfo::findLayer(const std::string& label) const
 	return -1;
 }
 
+void scanLayer(LayerImage& img)
+{
+	const size_t planes = img.m_planes.size();
+	std::mutex mu;
+	int64_t nan = 0, inf = 0;
+	std::vector<ChannelStats> stats(planes);
+	std::vector<double> sums(planes, 0.0);
+	parallelFor(img.m_height,
+	            64,
+	            [&](int yBegin, int yEnd)
+	            {
+		            const size_t i0 = static_cast<size_t>(yBegin) * img.m_width;
+		            const size_t n =
+		                static_cast<size_t>(yEnd - yBegin) * img.m_width;
+		            // Per pixel: bit 0 a NaN in some channel, bit 1 an inf. A
+		            // plane at a time, so each loop runs over one array of one
+		            // type.
+		            std::vector<uint8_t> bad(n, 0);
+		            std::vector<ChannelStats> st(planes);
+		            std::vector<double> sum(planes, 0.0);
+		            auto scan = [&](size_t c, auto get)
+		            {
+			            float lo = INFINITY, hi = -INFINITY;
+			            double total = 0;
+			            int64_t count = 0;
+			            for(size_t k = 0; k < n; ++k)
+			            {
+				            const float v = get(i0 + k);
+				            if(!std::isfinite(v))
+				            {
+					            bad[k] |= std::isnan(v) ? 1 : 2;
+					            continue;
+				            }
+				            lo = std::min(lo, v);
+				            hi = std::max(hi, v);
+				            total += v;
+				            ++count;
+			            }
+			            st[c] = {lo, hi, 0, count};
+			            sum[c] = total;
+		            };
+		            for(size_t c = 0; c < planes; ++c)
+		            {
+			            const Plane& p = img.m_planes[c];
+			            if(const uint16_t* h = p.halfData())
+			            {
+				            scan(c,
+				                 [h](size_t i) { return halfToFloat(h[i]); });
+			            }
+			            else
+			            {
+				            const float* f = p.floatData();
+				            scan(c, [f](size_t i) { return f[i]; });
+			            }
+		            }
+		            int64_t nn = 0, ni = 0;
+		            for(uint8_t b : bad)
+		            {
+			            nn += b & 1;
+			            ni += b >> 1;
+		            }
+		            std::lock_guard lk(mu);
+		            nan += nn;
+		            inf += ni;
+		            for(size_t c = 0; c < planes; ++c)
+		            {
+			            ChannelStats& to = stats[c];
+			            const ChannelStats& from = st[c];
+			            if(!from.m_count)
+			            {
+				            continue;
+			            }
+			            to.m_min = to.m_count ? std::min(to.m_min, from.m_min)
+			                                  : from.m_min;
+			            to.m_max = to.m_count ? std::max(to.m_max, from.m_max)
+			                                  : from.m_max;
+			            to.m_count += from.m_count;
+			            sums[c] += sum[c];
+		            }
+	            });
+	for(size_t c = 0; c < planes; ++c)
+	{
+		if(stats[c].m_count)
+		{
+			stats[c].m_mean = sums[c] / static_cast<double>(stats[c].m_count);
+		}
+	}
+	img.m_nanPixels = nan;
+	img.m_infPixels = inf;
+	img.m_stats = std::move(stats);
+}
+
 LayerImage downsample(const LayerImage& src, int factor)
 {
 	if(factor <= 1)
@@ -50,6 +144,9 @@ LayerImage downsample(const LayerImage& src, int factor)
 	out.m_dataWindow = src.m_dataWindow;
 	out.m_displayWindow = src.m_displayWindow;
 	out.m_channelNames = src.m_channelNames;
+	out.m_nanPixels = src.m_nanPixels;
+	out.m_infPixels = src.m_infPixels;
+	out.m_stats = src.m_stats;
 	out.m_reduce = src.m_reduce * factor;
 	out.m_width = std::max(1, src.m_width / factor);
 	out.m_height = std::max(1, src.m_height / factor);
