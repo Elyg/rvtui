@@ -56,7 +56,8 @@ struct Sample
 	};
 	State m_state = State::NONE;
 	std::filesystem::path m_path; ///< the frame read
-	int m_x = 0, m_y = 0;
+	int m_x = 0, m_y = 0; ///< image (file) coordinates: y down from the top
+	Box2i m_frame;        ///< the display window, for nukeX() / nukeY()
 	bool m_exact = false; ///< full resolution (else what is on screen, ≈)
 	std::string m_layer;
 	std::vector<std::pair<std::string, float>> m_values;
@@ -64,6 +65,17 @@ struct Sample
 	int m_r = 0, m_g = 0, m_b = 0;  ///< display-transformed, 8-bit
 	float m_rgba[4] = {0, 0, 0, 1}; ///< file values (linear), for readouts
 	bool m_hasAlpha = false;
+
+	/// Nuke's coordinates, which every readout shows: (0, 0) at the frame's
+	/// bottom-left, y up. File coordinates when the frame is unknown.
+	int nukeX() const noexcept
+	{
+		return m_frame.width() > 0 ? m_x - m_frame.m_x0 : m_x;
+	}
+	int nukeY() const noexcept
+	{
+		return m_frame.height() > 0 ? m_frame.m_y1 - m_y : m_y;
+	}
 };
 
 /// What the viewer's panes read and change. Owned by Viewer; the panes hold a

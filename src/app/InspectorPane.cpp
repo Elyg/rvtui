@@ -113,13 +113,16 @@ Element rgbaValues(const Sample& s)
 
 std::string sampleCoord(const Sample& s)
 {
-	return fmt::format("{}[{}, {}]", s.m_exact ? "" : "≈ ", s.m_x, s.m_y);
+	return fmt::format("{}[{}, {}]",
+	                   s.m_exact ? "" : "≈ ",
+	                   s.nukeX(),
+	                   s.nukeY());
 }
 
 std::vector<std::pair<std::string, std::string>> sampleItems(const Sample& s)
 {
 	std::vector<std::pair<std::string, std::string>> items{
-	    {"pixel", fmt::format("[{}, {}]", s.m_x, s.m_y)},
+	    {"pixel", fmt::format("[{}, {}]", s.nukeX(), s.nukeY())},
 	    {"layer", s.m_layer},
 	    {"rgba",
 	     fmt::format("({:.6g}, {:.6g}, {:.6g}, {:.6g})",

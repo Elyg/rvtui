@@ -1456,8 +1456,8 @@ Element Viewer::renderHud(const ImageInfoPtr& info)
 		                                 m_state.m_picked->m_g,
 		                                 m_state.m_picked->m_b)));
 		parts.push_back(text(fmt::format("[{}, {}] ",
-		                                 m_state.m_picked->m_x,
-		                                 m_state.m_picked->m_y)) |
+		                                 m_state.m_picked->nukeX(),
+		                                 m_state.m_picked->nukeY())) |
 		                dim);
 		parts.push_back(rgbaValues(*m_state.m_picked));
 		parts.push_back(text(" "));
@@ -1529,6 +1529,10 @@ Sample Viewer::sampleAt(int cellX, int cellY)
 		return out;
 	}
 	out.m_state = Sample::State::LOADING;
+	if(const ImageInfoPtr i = m_ctx.m_svc.info(path))
+	{
+		out.m_frame = i->displayWindow(); // before the pixels land
+	}
 	out.m_path = path;
 	out.m_layer = layer;
 	out.m_x = static_cast<int>(std::floor(coord->first));
@@ -1543,6 +1547,7 @@ Sample Viewer::sampleAt(int cellX, int cellY)
 		return out;
 	}
 	out.m_exact = full != nullptr;
+	out.m_frame = img->m_displayWindow;
 	bool inside = false;
 	for(size_t c = 0; c < img->m_channelNames.size(); ++c)
 	{

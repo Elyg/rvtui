@@ -15,7 +15,8 @@
 namespace rv
 {
 
-/// "[x, y]", with ≈ when read from a reduced resolution.
+/// "[x, y]" as Nuke counts them (y up from the frame's bottom), with ≈ when
+/// read from a reduced resolution.
 std::string sampleCoord(const Sample& s);
 /// The sample as name/value rows: what the inspector's cursor moves over and
 /// `y` / `Y` copy.

@@ -142,6 +142,23 @@ TEST_F(Panes, InspectorCopiesTheLineOrValue)
 	EXPECT_EQ(m_c.m_ctx.m_message, "pick cleared");
 }
 
+TEST_F(Panes, InspectorCountsPixelsAsNukeDoes)
+{
+	// File row 136 of a 480x270 frame is Nuke's y 133 (from the bottom).
+	Sample s;
+	s.m_exact = true;
+	s.m_x = 220;
+	s.m_y = 136;
+	s.m_frame = {0, 0, 479, 269};
+	EXPECT_EQ(sampleCoord(s), "[220, 133]");
+	EXPECT_EQ(sampleItems(s)[0].second, "[220, 133]");
+	// Offset display window: counted from its own bottom-left corner.
+	s.m_frame = {10, 20, 489, 289};
+	EXPECT_EQ(sampleCoord(s), "[210, 153]");
+	s.m_frame = {}; // unknown frame: file coordinates
+	EXPECT_EQ(sampleCoord(s), "[220, 136]");
+}
+
 TEST_F(Panes, InspectorPassesOnViewerKeysAndClosesOnItsNumber)
 {
 	InspectorPane p(m_state, m_c.m_ctx);

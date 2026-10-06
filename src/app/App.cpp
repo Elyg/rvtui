@@ -236,6 +236,7 @@ Element App::renderHelp()
 		    row("drag", "column edges: width; files title: height"),
 		    row("Enter (tile)", "open the selected tile"),
 		    row("Ctrl+click", "pick colour (right click works too)"),
+		    row("", "[x, y] as in Nuke: from the bottom-left"),
 		    text(""),
 		    section("Sequence"),
 		    row("space", "play / pause"),
