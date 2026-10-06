@@ -94,8 +94,10 @@ bool refreshCellSize(TermCaps& caps)
 		{
 			lastCols = ws.ws_col;
 			lastRows = ws.ws_row;
-			std::string out = run(
-			    "tmux display -p '#{client_cell_width} #{client_cell_height}'");
+			// Quiet when tmux can't answer (its socket in /tmp removed): it
+			// would print "error connecting to …" over the terminal.
+			std::string out =
+			    tmuxDisplay("#{client_cell_width} #{client_cell_height}");
 			if(std::sscanf(out.c_str(), "%d %d", &tmuxW, &tmuxH) != 2)
 			{
 				tmuxW = tmuxH = 0;
