@@ -36,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      # Conan only; the dev shell comes from cache.nixos.org (see release.yml).
       - uses: actions/cache@v4
         with:
           path: ~/.conan2

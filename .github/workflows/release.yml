@@ -22,8 +22,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
-      # Fully static musl binary: runs on any Linux.
-      - run: nix build .#static -L
+      # Fully static musl binary: runs on any Linux. Nix can't see the tag, so pass it in.
+      - run: RVTUI_VERSION="${GITHUB_REF_NAME#v}" nix build --impure .#static -L
       - run: |
           mkdir -p dist
           tar -C result/bin -czf "dist/rvtui-${GITHUB_REF_NAME#v}-linux-${{ matrix.arch }}.tar.gz" rvtui
@@ -39,7 +39,8 @@ jobs:
         with:
           fetch-depth: 0 # version comes from the tag
       - uses: DeterminateSystems/nix-installer-action@main
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      # No magic-nix-cache: the dev shell all comes from cache.nixos.org, and its post
+      # step spent minutes re-uploading it. The conan cache below is what matters here.
       - uses: actions/cache@v4
         with:
           path: ~/.conan2

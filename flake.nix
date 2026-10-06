@@ -13,8 +13,13 @@
       flake-utils,
     }:
     let
-      # Nix builds have no tags; identify them by commit instead.
-      version = "git-${self.shortRev or self.dirtyShortRev or "dev"}";
+      # Nix builds have no tags; identify them by commit instead. A release passes its tag
+      # in: RVTUI_VERSION=0.1.0 nix build --impure .#static (getEnv is "" when pure).
+      version =
+        let
+          tag = builtins.getEnv "RVTUI_VERSION";
+        in
+        if tag != "" then tag else "git-${self.shortRev or self.dirtyShortRev or "dev"}";
 
       # pkgsStatic libraries aren't in the binary cache, so `.#static` compiles them from
       # source; skip their test suites (rvtui's own still run). Non-static packages are
