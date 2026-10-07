@@ -66,6 +66,7 @@ add_library(rvtui_core STATIC
     src/app/LayersPane.cpp
     src/app/LineEditor.cpp
     src/app/MetaPane.cpp
+    src/app/Playbar.cpp
     src/app/Player.cpp
     src/app/Sheet.cpp
     src/app/Viewer.cpp
@@ -79,6 +80,7 @@ add_library(rvtui_core STATIC
     src/image/Render.cpp
     src/image/Sequence.cpp
     src/image/StbLoader.cpp
+    src/term/BitmapSlot.cpp
     src/term/Caps.cpp
     src/term/Doctor.cpp
     src/term/ImageView.cpp
@@ -110,6 +112,7 @@ if(RVTUI_BUILD_TESTS)
         tests/test_image.cpp
         tests/test_line_editor.cpp
         tests/test_panes.cpp
+        tests/test_playbar.cpp
         tests/test_player.cpp
         tests/test_sequence_kitty.cpp
         tests/test_sheet.cpp

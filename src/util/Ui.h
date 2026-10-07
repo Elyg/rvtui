@@ -17,6 +17,12 @@ namespace rv::ui
                                          std::span<const size_t> pos,
                                          ftxui::Decorator base);
 
+/// Byte offsets of the first occurrence of `needle` in `hay`, ignoring
+/// (ASCII) case, for highlighted(); empty when it is not there or `needle`
+/// is empty.
+[[nodiscard]] std::vector<size_t> findIgnoringCase(std::string_view hay,
+                                                   std::string_view needle);
+
 /// A pane footer hint: key, what it does.
 using PaneHint = std::pair<std::string_view, std::string_view>;
 /// Pane footer: an optional dim prefix (position), then "(key what)" hints

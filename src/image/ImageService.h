@@ -65,6 +65,13 @@ public:
 	              const std::string& layerLabel,
 	              int reduce);
 
+	/// For each of `paths`, whether `layerLabel` is decoded at any
+	/// resolution (the playbar's cached frames). One pass over the cache;
+	/// files never asked for are not stat'ed.
+	std::vector<bool>
+	cachedLayers(const std::vector<std::filesystem::path>& paths,
+	             const std::string& layerLabel);
+
 	std::optional<std::string> error(const std::filesystem::path& p);
 
 	/// Re-stat `paths`; any whose mtime/size changed (re-rendered, overwritten,

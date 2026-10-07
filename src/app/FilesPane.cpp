@@ -300,7 +300,7 @@ bool FilesPane::event(const Event& e)
 			m_ctx.m_message = "D again: clear all annotations";
 		}
 	}
-	else if(onGlobal && (ch("J") || ch("K") || ch("x") || ch("d")))
+	else if(onGlobal && (ch("J") || ch("K") || ch("d")))
 	{
 		// the global row stays put
 	}
@@ -314,7 +314,7 @@ bool FilesPane::event(const Event& e)
 		moveSource(m_cursor, m_cursor - 1);
 		m_cursor = std::max(0, m_cursor - 1);
 	}
-	else if(ch("x") || ch("d"))
+	else if(ch("d"))
 	{
 		if(n <= 1)
 		{

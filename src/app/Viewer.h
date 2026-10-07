@@ -7,6 +7,7 @@
 #include "app/LayersPane.h"
 #include "app/LineEditor.h"
 #include "app/MetaPane.h"
+#include "app/Playbar.h"
 #include "app/Player.h"
 #include "app/Sheet.h"
 #include "app/ViewerState.h"
@@ -87,6 +88,11 @@ public:
 	{
 		return m_player;
 	}
+	/// Cells the playbar's bar takes, as last drawn.
+	int playbarWidth() const noexcept
+	{
+		return m_playbar.trackWidth();
+	}
 	/// The contact sheet as last drawn, and where it is zoomed / panned.
 	const SheetLayout& sheet() const noexcept
 	{
@@ -130,6 +136,9 @@ private:
 	/// `f`: fit the image, into the area left of the side panes if open.
 	void fitView(const ImageInfoPtr& info);
 	void setFrame(int f);
+	/// `I` / `O`: set the in / out point at the current frame; again on it,
+	/// clear it.
+	void setInOut(bool in);
 	/// `:`: start typing a frame number (sequences only).
 	void openGoto();
 	/// A key while typing the frame number; Enter goes to it.
@@ -224,6 +233,8 @@ private:
 	ftxui::Element renderHud(const ImageInfoPtr& info);
 	ftxui::Element renderTiles(const ImageInfoPtr& info, int width);
 	ftxui::Element renderStatus(const ImageInfoPtr& info);
+	/// The timeline under a sequence (frameCount() > 1).
+	ftxui::Element renderPlaybar(const ImageInfoPtr& info);
 	/// The `:` prompt, in place of the status bar.
 	ftxui::Element renderGoto() const;
 
@@ -236,6 +247,8 @@ private:
 	bool m_playbackCap = true;     ///< `P`: lower resolution while playing
 	int m_mouseX = -1, m_mouseY = -1;
 	std::optional<LineEditor> m_goto; ///< `:` frame number being typed
+	Playbar m_playbar;
+	bool m_scrubbing = false; ///< the playbar is being dragged
 
 	ImageSlotPtr m_viewSlot;
 	/// A tile on screen: its slot and how it shows its image.
@@ -270,8 +283,12 @@ private:
 	ftxui::Box m_leftBox{}; ///< the left column
 	int m_dragDivider = 0;  ///< being dragged: 1 = left column's, 2 = right's
 	bool m_dragFiles = false; ///< the files pane's title is being dragged
-	/// Panning with a left / middle drag: where the mouse last was.
+	/// Panning with a right / middle drag: where the mouse last was.
 	std::optional<std::pair<int, int>> m_dragPan;
+	/// Scrubbing with a left drag on the image: the column the mouse was
+	/// at, and the part of a frame not stepped yet.
+	std::optional<int> m_scrubX;
+	double m_scrubCarry = 0;
 	struct HiddenPanes
 	{
 		bool m_meta = false, m_files = false, m_inspector = false,

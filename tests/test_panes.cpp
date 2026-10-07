@@ -660,11 +660,11 @@ TEST_F(Panes, FilesDropKeepsTheLastImage)
 	FilesPane p(m_state, m_c.m_ctx);
 	m_state.m_current = 2;
 	p.show();
-	EXPECT_TRUE(p.event(key("x")));
+	EXPECT_TRUE(p.event(key("d")));
 	ASSERT_EQ(m_state.m_sources.size(), 2u);
 	EXPECT_EQ(m_state.m_current, 1);
-	EXPECT_TRUE(p.event(key("x")));
-	EXPECT_TRUE(p.event(key("x")));
+	EXPECT_TRUE(p.event(key("d")));
+	EXPECT_TRUE(p.event(key("d")));
 	EXPECT_EQ(m_state.m_sources.size(), 1u);
 	EXPECT_EQ(m_c.m_ctx.m_message, "the last image stays");
 }
@@ -724,7 +724,7 @@ TEST_F(Panes, AnnotationLineIsTypedLiveAndCommitted)
 	FilesPane p(m_state, m_c.m_ctx);
 	p.show();
 	EXPECT_TRUE(p.event(key("l"))); // a.exr's set, cursor on the first slot
-	EXPECT_TRUE(p.event(key("o")));
+	EXPECT_TRUE(p.event(key("a")));
 	ASSERT_TRUE(p.annotations().editing());
 	// Looked up each time: the sets move as they are used (most recent first).
 	const std::string srcKey = sourceKey(m_state.m_sources[0]);
@@ -744,7 +744,7 @@ TEST_F(Panes, AnnotationLineIsTypedLiveAndCommitted)
 	EXPECT_EQ(m_c.m_ann.history().front(), "hi3");
 
 	// Esc on a new line drops it.
-	EXPECT_TRUE(p.event(key("o")));
+	EXPECT_TRUE(p.event(key("a")));
 	EXPECT_TRUE(p.event(key("x")));
 	EXPECT_TRUE(p.event(Event::Escape));
 	EXPECT_EQ(bottomLeft(), (std::vector<std::string>{"hi3"}));

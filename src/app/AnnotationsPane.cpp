@@ -155,7 +155,7 @@ Element AnnotationsPane::render(bool focused)
 	}
 	else if(focused)
 	{
-		hints = ui::paneHints("", {{"h", "back"}, {"o", "add"}, {"x", "del"}});
+		hints = ui::paneHints("", {{"h", "back"}, {"a", "add"}, {"d", "del"}});
 	}
 	else
 	{
@@ -427,13 +427,13 @@ bool AnnotationsPane::event(const Event& e)
 			startEdit(g, r.m_slot, -1); // a slot row: add to it
 		}
 	}
-	else if(ch("o") || ch("O"))
+	else if(ch("a") || ch("A"))
 	{
-		// New line below (`o`) / above (`O`) a line, else at the slot's end.
-		const int at = r.m_kind == K::LINE ? r.m_line + (ch("o") ? 1 : 0) : -1;
+		// New line below (`a`) / above (`A`) a line, else at the slot's end.
+		const int at = r.m_kind == K::LINE ? r.m_line + (ch("a") ? 1 : 0) : -1;
 		startEdit(g, r.m_slot, -1, at);
 	}
-	else if(r.m_kind == K::LINE && (ch("x") || ch("d")))
+	else if(r.m_kind == K::LINE && ch("d"))
 	{
 		auto& lines = set(g).lines(r.m_slot);
 		lines.erase(lines.begin() + r.m_line);

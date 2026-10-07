@@ -5,6 +5,8 @@
 #include <spdlog/spdlog.h>
 
 #include <chrono>
+#include <string_view>
+#include <unordered_set>
 
 namespace rv
 {
@@ -205,6 +207,34 @@ bool ImageService::hasLayer(const std::filesystem::path& p,
 	std::lock_guard lk(m_mu);
 	return m_cache.count(layerKey(identLocked(p), label, std::max(1, reduce))) >
 	       0;
+}
+
+std::vector<bool>
+ImageService::cachedLayers(const std::vector<std::filesystem::path>& paths,
+                           const std::string& layerLabel)
+{
+	std::lock_guard lk(m_mu);
+	// Keys are "L|<ident>|<label>|<reduce>": the idents with the label
+	// decoded at some resolution.
+	const std::string tail = "|" + layerLabel + "|";
+	std::unordered_set<std::string_view> decoded;
+	for(const auto& [key, entry] : m_cache)
+	{
+		const auto at = key.rfind(tail);
+		if(key.starts_with("L|") && at != std::string::npos && at > 2)
+		{
+			decoded.insert(std::string_view(key).substr(2, at - 2));
+		}
+	}
+	std::vector<bool> out(paths.size(), false);
+	for(size_t i = 0; i < paths.size() && !decoded.empty(); ++i)
+	{
+		const std::string path = paths[i].string();
+		auto it = m_stamps.find(path);
+		out[i] =
+		    it != m_stamps.end() && decoded.contains(path + "|" + it->second);
+	}
+	return out;
 }
 
 void ImageService::demote(const std::filesystem::path& p,

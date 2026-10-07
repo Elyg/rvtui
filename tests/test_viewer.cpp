@@ -318,7 +318,7 @@ TEST_F(ViewerTest, ZoomStepsBy125PercentAndPanMovesByCells)
 	EXPECT_TRUE(state().m_view.m_fit);
 }
 
-TEST_F(ViewerTest, LeftOrMiddleDragPansLikeHjkl)
+TEST_F(ViewerTest, RightOrMiddleDragPansLikeHjkl)
 {
 	m_v.open({layersEntry()});
 	draw();
@@ -336,9 +336,9 @@ TEST_F(ViewerTest, LeftOrMiddleDragPansLikeHjkl)
 	const double cx = state().m_view.m_centerX;
 	const double cy = state().m_view.m_centerY;
 	// The image follows the mouse: dragging right looks further left.
-	mouse(ftxui::Mouse::Left, 40, 12, ftxui::Mouse::Pressed);
-	mouse(ftxui::Mouse::Left, 44, 13, ftxui::Mouse::Moved);
-	mouse(ftxui::Mouse::Left, 44, 13, ftxui::Mouse::Released);
+	mouse(ftxui::Mouse::Right, 40, 12, ftxui::Mouse::Pressed);
+	mouse(ftxui::Mouse::Right, 44, 13, ftxui::Mouse::Moved);
+	mouse(ftxui::Mouse::Right, 44, 13, ftxui::Mouse::Released);
 	EXPECT_NEAR(state().m_view.m_centerX, cx - 4, 1e-9);
 	EXPECT_NEAR(state().m_view.m_centerY, cy - 2, 1e-9);
 	mouse(ftxui::Mouse::Middle, 40, 12, ftxui::Mouse::Pressed);
@@ -353,12 +353,13 @@ TEST_F(ViewerTest, LeftOrMiddleDragPansLikeHjkl)
 	EXPECT_NEAR(state().m_view.m_centerX, cx + 6, 1e-9);
 }
 
-TEST_F(ViewerTest, RightClickPicksAPixelUntilReopened)
+TEST_F(ViewerTest, CtrlClickPicksAPixelUntilReopened)
 {
 	m_v.open({layersEntry()});
 	draw();
 	ftxui::Mouse m;
-	m.button = ftxui::Mouse::Right;
+	m.button = ftxui::Mouse::Left;
+	m.control = true;
 	m.motion = ftxui::Mouse::Pressed;
 	m.x = 40;
 	m.y = 12;
@@ -385,7 +386,8 @@ TEST_F(ViewerTest, OcioViewChangesWhatIsShownAndSGoesRaw)
 	auto pickRed = [&]
 	{
 		ftxui::Mouse m;
-		m.button = ftxui::Mouse::Right;
+		m.button = ftxui::Mouse::Left;
+		m.control = true;
 		m.motion = ftxui::Mouse::Pressed;
 		m.x = 40;
 		m.y = 12;
@@ -416,8 +418,10 @@ TEST_F(ViewerTest, NextAndPreviousImageWrap)
 	EXPECT_EQ(state().m_current, 1);
 	press(key("n"));
 	EXPECT_EQ(state().m_current, 0);
-	press(key("N"));
+	press(key("p"));
 	EXPECT_EQ(state().m_current, 1);
+	press(key("N")); // previous too
+	EXPECT_EQ(state().m_current, 0);
 }
 
 TEST_F(ViewerTest, QUntilesFirstThenCloses)
@@ -659,4 +663,109 @@ TEST(AppContext, ReduceForAcceptsSlackWhilePlaying)
 	const Box2i small{0, 0, 79, 79};
 	EXPECT_EQ(c.m_ctx.reduceFor(*slot, small, std::nullopt, 4'000'000, 1.25),
 	          1);
+}
+
+TEST_F(ViewerTest, InAndOutPointsBoundSteppingAndClearAgain)
+{
+	m_v.open({sequenceEntry()});
+	press(key("."));
+	press(key("I")); // in at the second frame
+	EXPECT_EQ(state().m_in, 1);
+	EXPECT_EQ(m_c.m_ctx.m_message, "in point: 2");
+	press(key("."));
+	press(key("O"));
+	EXPECT_EQ(state().m_out, 2);
+	press(key("."));
+	EXPECT_EQ(state().m_frame, 1); // wrapped round to the in point
+	press(key(","));
+	EXPECT_EQ(state().m_frame, 2);
+	press(key("<"));
+	EXPECT_EQ(state().m_frame, 1);
+	press(key("I")); // again on it: cleared
+	EXPECT_FALSE(state().m_in);
+	EXPECT_EQ(state().playRange().m_first, 0);
+	// An in point past the out point drops the out point.
+	press(key("O")); // out moves to the second frame
+	EXPECT_EQ(state().m_out, 1);
+	press(key(":"));
+	press(key("3"));
+	press(Event::Return);
+	EXPECT_EQ(state().m_frame, 2);
+	press(key("I"));
+	EXPECT_EQ(state().m_in, 2);
+	EXPECT_FALSE(state().m_out);
+
+	m_v.open({sequenceEntry()}); // a fresh open forgets them
+	EXPECT_FALSE(state().m_in);
+	EXPECT_FALSE(state().m_out);
+}
+
+TEST_F(ViewerTest, ClickingThePlaybarScrubsAndPauses)
+{
+	m_v.open({sequenceEntry()});
+	draw();
+	auto mouse = [&](ftxui::Mouse::Button b, int x, int y, auto motion)
+	{
+		ftxui::Mouse m;
+		m.button = b;
+		m.motion = motion;
+		m.x = x;
+		m.y = y;
+		press(Event::Mouse("", m));
+	};
+	press(key(" "));
+	ASSERT_TRUE(m_v.playing());
+	// The playbar's track: the row above the status bar.
+	mouse(ftxui::Mouse::Left, 79, 22, ftxui::Mouse::Pressed);
+	EXPECT_FALSE(m_v.playing());
+	EXPECT_EQ(state().m_frame, 2);
+	mouse(ftxui::Mouse::Left, 0, 22, ftxui::Mouse::Moved);
+	EXPECT_EQ(state().m_frame, 0);
+	mouse(ftxui::Mouse::Left, 0, 22, ftxui::Mouse::Released);
+	mouse(ftxui::Mouse::WheelDown, 40, 22, ftxui::Mouse::Pressed);
+	EXPECT_EQ(state().m_frame, 1);
+	mouse(ftxui::Mouse::WheelUp, 40, 21, ftxui::Mouse::Pressed);
+	EXPECT_EQ(state().m_frame, 0);
+}
+
+TEST_F(ViewerTest, XOpensTheFilesPaneButClearsThePickInTheInspector)
+{
+	m_v.open({layersEntry()});
+	press(key("x"));
+	EXPECT_EQ(state().m_focus, Focus::FILES);
+	press(key("x")); // focused: closes
+	EXPECT_EQ(state().m_focus, Focus::IMAGE);
+	press(key("4"));
+	press(key("x"));
+	EXPECT_EQ(state().m_focus, Focus::INSPECT);
+}
+
+TEST_F(ViewerTest, LeftDragOnTheImageScrubsAndStopsAtTheEnds)
+{
+	m_v.open({sequenceEntry()});
+	draw();
+	auto mouse = [&](int x, auto motion)
+	{
+		ftxui::Mouse m;
+		m.button = ftxui::Mouse::Left;
+		m.motion = motion;
+		m.x = x;
+		m.y = 10;
+		press(Event::Mouse("", m));
+	};
+	press(key(" "));
+	const double cx = state().m_view.m_centerX;
+	// 3 frames on the playbar's width: a third of it is a frame.
+	const int third = (m_v.playbarWidth() + 2) / 3;
+	mouse(20, ftxui::Mouse::Pressed);
+	EXPECT_TRUE(m_v.playing()); // a click alone leaves playback be
+	mouse(20 + third, ftxui::Mouse::Moved);
+	EXPECT_FALSE(m_v.playing());
+	EXPECT_EQ(state().m_frame, 1);
+	mouse(20 + 5 * third, ftxui::Mouse::Moved);
+	EXPECT_EQ(state().m_frame, 2); // the end: no wrap
+	mouse(0, ftxui::Mouse::Moved);
+	EXPECT_EQ(state().m_frame, 0);
+	mouse(0, ftxui::Mouse::Released);
+	EXPECT_EQ(state().m_view.m_centerX, cx); // no pan
 }

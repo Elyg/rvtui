@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/Annotations.h"
+#include "app/Player.h"
 #include "image/Render.h"
 #include "image/Sequence.h"
 
@@ -85,6 +86,8 @@ struct ViewerState
 	std::vector<Source> m_sources;
 	int m_current = 0; ///< active source
 	int m_frame = 0;
+	/// `I` / `O`: where playback starts and ends (frame indices).
+	std::optional<int> m_in, m_out;
 	std::string m_layerLabel;
 	DisplayParams m_disp;
 	ViewParams m_view;
@@ -104,6 +107,9 @@ struct ViewerState
 	/// The current frame of the active source.
 	std::filesystem::path currentFramePath() const;
 	int frameCount() const; ///< the longest source's
+	/// The frames playback loops over: in to out, each defaulting to the
+	/// sequence's end; the whole sequence if they cross.
+	FrameRange playRange() const;
 	/// The sequence `:` frame numbers refer to: the active source, else the
 	/// first sequence open; nullptr when none is a sequence.
 	const Source* numberedSource() const;

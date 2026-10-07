@@ -81,6 +81,14 @@ int ViewerState::frameCount() const
 	return n;
 }
 
+FrameRange ViewerState::playRange() const
+{
+	const int last = frameCount() - 1;
+	FrameRange r{std::clamp(m_in.value_or(0), 0, last),
+	             std::clamp(m_out.value_or(last), 0, last)};
+	return r.m_first <= r.m_last ? r : FrameRange{0, last};
+}
+
 const Source* ViewerState::numberedSource() const
 {
 	if(m_current >= 0 && m_current < static_cast<int>(m_sources.size()) &&

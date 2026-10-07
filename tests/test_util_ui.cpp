@@ -212,3 +212,13 @@ TEST(Ui, WrapWidthBreaksByCells)
 	          (std::vector<std::string>{"日", "本", "語"}));
 	EXPECT_EQ(ui::wrapWidth("ab", 0), (std::vector<std::string>{"a", "b"}));
 }
+
+TEST(UiFind, FirstMatchIgnoringCase)
+{
+	EXPECT_EQ(ui::findIgnoringCase("Play / Pause", "pause"),
+	          (std::vector<size_t>{7, 8, 9, 10, 11}));
+	EXPECT_EQ(ui::findIgnoringCase("in / out point", "O"),
+	          (std::vector<size_t>{5})); // the first
+	EXPECT_TRUE(ui::findIgnoringCase("zoom", "pan").empty());
+	EXPECT_TRUE(ui::findIgnoringCase("zoom", "").empty());
+}

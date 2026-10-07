@@ -7,9 +7,36 @@
 #include <functional>
 #include <optional>
 #include <thread>
+#include <utility>
 
 namespace rv
 {
+
+/// The frames playback loops over, as indices (inclusive): the in / out
+/// points, else the whole sequence.
+struct FrameRange
+{
+	int m_first = 0, m_last = 0;
+
+	int count() const noexcept
+	{
+		return m_last - m_first + 1;
+	}
+	bool contains(int f) const noexcept
+	{
+		return f >= m_first && f <= m_last;
+	}
+	/// The frame after `f`, round to the start; from outside, the start.
+	int next(int f) const noexcept
+	{
+		return f < m_first || f >= m_last ? m_first : f + 1;
+	}
+	/// The frame before `f`, round to the end; from outside, the end.
+	int prev(int f) const noexcept
+	{
+		return f <= m_first || f > m_last ? m_last : f - 1;
+	}
+};
 
 /// Playback clock and read-ahead for the viewer. A ticker thread calls `wake`
 /// when the next frame is due (and a few times per frame while it is late);
@@ -80,16 +107,30 @@ public:
 	                     double frameBytes,
 	                     std::size_t sources) noexcept;
 
-	/// One tick on the UI thread, showing `frame` of `frameCount`. Asks for
-	/// the next `ahead` frames with `prefetch(f)`, then, once a frame period
-	/// has passed, returns the next frame if `ready(f)` (its pixels are
-	/// cached; ready() asks for them urgently when not).
+	/// One tick on the UI thread, showing `frame`, looping over `range`.
+	/// Asks for the next `ahead` frames with `prefetch(f)`, then, once a
+	/// frame period has passed, returns the next frame if `ready(f)` (its
+	/// pixels are cached; ready() asks for them urgently when not).
+	template <class Prefetch, class Ready>
+	std::optional<int> tick(int frame,
+	                        FrameRange range,
+	                        int ahead,
+	                        Prefetch&& prefetch,
+	                        Ready&& ready);
+	/// tick() over all `frameCount` frames.
 	template <class Prefetch, class Ready>
 	std::optional<int> tick(int frame,
 	                        int frameCount,
 	                        int ahead,
 	                        Prefetch&& prefetch,
-	                        Ready&& ready);
+	                        Ready&& ready)
+	{
+		return tick(frame,
+		            FrameRange{0, std::max(1, frameCount) - 1},
+		            ahead,
+		            std::forward<Prefetch>(prefetch),
+		            std::forward<Ready>(ready));
+	}
 
 private:
 	void startTicker();
@@ -116,17 +157,16 @@ private:
 
 template <class Prefetch, class Ready>
 std::optional<int> Player::tick(
-    int frame, int frameCount, int ahead, Prefetch&& prefetch, Ready&& ready)
+    int frame, FrameRange range, int ahead, Prefetch&& prefetch, Ready&& ready)
 {
 	const double fps = m_fps > 0 ? m_fps : DEFAULT_FPS;
 	const auto now = m_now();
 	const double since = sinceAdvance(now, fps);
-	const int n = std::max(1, frameCount);
-	const int next = (frame + 1) % n;
-	const int count = std::min(ahead, n - 1);
-	for(int i = 0; i < count; ++i)
+	const int next = range.next(frame);
+	const int count = std::min(ahead, range.count() - 1);
+	for(int i = 0, f = next; i < count; ++i, f = range.next(f))
 	{
-		prefetch((next + i) % n);
+		prefetch(f);
 	}
 	if(since < 1.0 / fps || !ready(next))
 	{

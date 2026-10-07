@@ -63,7 +63,8 @@ std::optional<std::pair<double, double>> panStep(const Event& e)
 } // namespace
 
 Viewer::Viewer(AppContext& ctx, std::function<void()> onClose)
-    : m_ctx(ctx), m_onClose(std::move(onClose)), m_viewSlot(newSlot(ctx)),
+    : m_ctx(ctx), m_onClose(std::move(onClose)),
+      m_playbar(ctx.m_caps, ctx.m_kitty), m_viewSlot(newSlot(ctx)),
       m_meta(m_state, ctx), m_files(m_state, ctx), m_inspector(m_state, ctx),
       m_layers(m_state), m_colour(m_state, ctx),
       m_player(
@@ -95,6 +96,8 @@ void Viewer::open(std::vector<Entry> entries, bool tile)
 	}
 	m_state.m_current = 0;
 	m_state.m_frame = 0;
+	m_state.m_in.reset();
+	m_state.m_out.reset();
 	m_state.m_view = ViewParams{};
 	m_state.m_picked.reset();
 	m_fitBesidePanel = false;
@@ -465,6 +468,39 @@ void Viewer::setFrame(int f)
 	m_state.m_frame = ((f % n) + n) % n;
 }
 
+void Viewer::setInOut(bool in)
+{
+	if(m_state.frameCount() < 2)
+	{
+		m_ctx.m_message = "not a sequence";
+		return;
+	}
+	auto& point = in ? m_state.m_in : m_state.m_out;
+	auto& other = in ? m_state.m_out : m_state.m_in;
+	const int f = m_state.m_frame;
+	const char* name = in ? "in" : "out";
+	if(point == f)
+	{
+		point.reset();
+		m_ctx.m_message = fmt::format("{} point cleared", name);
+	}
+	else
+	{
+		point = f;
+		if(other && (in ? *other < f : *other > f))
+		{
+			other.reset(); // they would cross
+		}
+		const std::string label =
+		    m_state.m_sources[m_state.m_current].frameLabel(f);
+		m_ctx.m_message =
+		    fmt::format("{} point: {}",
+		                name,
+		                label.empty() ? std::to_string(f + 1) : label);
+	}
+	m_ctx.m_svc.clearPrefetch(); // read ahead for the new range instead
+}
+
 void Viewer::openGoto()
 {
 	if(!m_state.numberedSource())
@@ -611,9 +647,10 @@ bool Viewer::tick()
 	                          dw.height() / reduce * 4 * sizeof(float);
 	const int ahead =
 	    Player::readAhead(svc.budget(), frameBytes, m_state.m_sources.size());
+	const FrameRange range = m_state.playRange();
 	auto next = m_player.tick(
 	    m_state.m_frame,
-	    m_state.frameCount(),
+	    range,
 	    ahead,
 	    [&](int f) { prefetchFrame(f); },
 	    [&](int f)
@@ -647,7 +684,7 @@ bool Viewer::tick()
 		}
 	}
 	m_state.m_frame = *next;
-	prepareAhead((*next + 1) % std::max(1, m_state.frameCount()));
+	prepareAhead(range.next(*next));
 	return true;
 }
 
@@ -803,18 +840,17 @@ bool Viewer::event(Event e)
 	{
 		focus = Focus::IMAGE;
 	}
-	// Letter aliases for the pane numbers (RV-ish): m metadata, o files,
-	// i inspector, / layers. Not while typing, nor `o` inside an annotation
-	// set, where it adds a line.
-	const bool annKeys =
-	    focus == Focus::FILES && m_files.annotations().isOpen();
+	// Letter aliases for the pane numbers (RV-ish): m metadata, o / x
+	// files, i inspector, / layers. Not while typing, nor `x` in the
+	// inspector, where it clears the pick.
 	if(!typing() && e.is_character())
 	{
 		static const std::pair<const char*, const char*> ALIASES[] =
-		    {{"m", "2"}, {"o", "3"}, {"i", "4"}, {"/", "5"}};
+		    {{"m", "2"}, {"o", "3"}, {"x", "3"}, {"i", "4"}, {"/", "5"}};
 		for(const auto& [letter, number] : ALIASES)
 		{
-			if(e == Event::Character(letter) && !(annKeys && *letter == 'o'))
+			if(e == Event::Character(letter) &&
+			   !(focus == Focus::INSPECT && *letter == 'x'))
 			{
 				e = Event::Character(number);
 				break;
@@ -902,6 +938,34 @@ bool Viewer::mouseEvent(Event e, const ImageInfoPtr& info)
 		}
 		return true;
 	}
+	// Click or drag on the playbar to scrub (playback pauses); the wheel
+	// over it steps a frame.
+	const bool onPlaybar =
+	    m_state.frameCount() > 1 && m_playbar.contains(m.x, m.y);
+	if(m_scrubbing ||
+	   (onPlaybar && m.button == Mouse::Left && m.motion == Mouse::Pressed))
+	{
+		if(m.motion == Mouse::Released)
+		{
+			m_scrubbing = false;
+			return true;
+		}
+		if(!m_scrubbing && m_player.playing())
+		{
+			togglePlay();
+		}
+		m_scrubbing = true;
+		setFrame(m_playbar.frameAt(m.x));
+		return true;
+	}
+	if(onPlaybar &&
+	   (m.button == Mouse::WheelUp || m.button == Mouse::WheelDown))
+	{
+		const FrameRange range = m_state.playRange();
+		setFrame(m.button == Mouse::WheelDown ? range.next(m_state.m_frame)
+		                                      : range.prev(m_state.m_frame));
+		return true;
+	}
 	// Drag the files pane's title up or down: it sits at the bottom, so the
 	// title follows the mouse and the list fills the rows below it.
 	if(m_files.isOpen() && m.button == Mouse::Left &&
@@ -927,7 +991,32 @@ bool Viewer::mouseEvent(Event e, const ImageInfoPtr& info)
 		}
 		return true;
 	}
-	// Drag the image (or the sheet) with the left or middle button to pan,
+	// Drag on the image with the left button to scrub the timeline, at the
+	// playbar's pace (a bar's width of dragging goes the whole sequence);
+	// playback pauses. It stops at the ends rather than wrapping round.
+	if(m_scrubX)
+	{
+		if(m.motion == Mouse::Released)
+		{
+			m_scrubX.reset();
+		}
+		else if(m.motion == Mouse::Moved && m.x != *m_scrubX)
+		{
+			if(m_player.playing())
+			{
+				togglePlay();
+			}
+			const int n = m_state.frameCount();
+			m_scrubCarry += static_cast<double>(m.x - *m_scrubX) * n /
+			                std::max(1, m_playbar.trackWidth());
+			const int step = static_cast<int>(m_scrubCarry); // toward 0
+			m_scrubCarry -= step;
+			setFrame(std::clamp(m_state.m_frame + step, 0, n - 1));
+			m_scrubX = m.x;
+		}
+		return true;
+	}
+	// Drag the image (or the sheet) with the right or middle button to pan,
 	// as hjkl do: it follows the mouse.
 	if(m_dragPan)
 	{
@@ -982,21 +1071,23 @@ bool Viewer::mouseEvent(Event e, const ImageInfoPtr& info)
 		zoomBy(f, m_viewSlot->imageCoordAt(m.x, m.y));
 		return true;
 	}
-	// Click selects (a tile, or which pane has focus); Ctrl+click picks
-	// the colour. macOS terminals often turn Ctrl+click into a right
-	// click, so that picks too.
+	// Click selects (a tile, or which pane has focus) and, dragged on a
+	// sequence, scrubs; Ctrl+click picks the colour; right / middle drag
+	// pans.
 	const bool pressed = m.motion == Mouse::Pressed;
-	const bool pick = pressed && ((m.button == Mouse::Left && m.control) ||
-	                              m.button == Mouse::Right);
+	const bool pick = pressed && m.button == Mouse::Left && m.control;
 	if(pressed && !overSide &&
-	   ((m.button == Mouse::Left && !m.control) || m.button == Mouse::Middle))
+	   (m.button == Mouse::Right || m.button == Mouse::Middle))
 	{
 		m_dragPan = std::pair(m.x, m.y);
-		if(m.button == Mouse::Middle)
-		{
-			m_state.m_focus = Focus::IMAGE;
-			return true;
-		}
+		m_state.m_focus = Focus::IMAGE;
+		return true;
+	}
+	if(pressed && !overSide && m.button == Mouse::Left && !m.control &&
+	   m_state.frameCount() > 1)
+	{
+		m_scrubX = m.x;
+		m_scrubCarry = 0;
 	}
 	if(!pressed || (m.button != Mouse::Left && !pick))
 	{
@@ -1071,7 +1162,7 @@ bool Viewer::keyEvent(const Event& e, const ImageInfoPtr& info)
 			close();
 		}
 	}
-	else if(ch("]") || ch("[") || ch("n") || ch("N"))
+	else if(ch("]") || ch("[") || ch("n") || ch("p") || ch("N"))
 	{
 		if(ch("]") || ch("["))
 		{
@@ -1248,19 +1339,23 @@ bool Viewer::keyEvent(const Event& e, const ImageInfoPtr& info)
 	}
 	else if(ch("."))
 	{
-		setFrame(m_state.m_frame + 1);
+		setFrame(m_state.playRange().next(m_state.m_frame));
 	}
 	else if(ch(","))
 	{
-		setFrame(m_state.m_frame - 1);
+		setFrame(m_state.playRange().prev(m_state.m_frame));
 	}
 	else if(ch("<"))
 	{
-		setFrame(0);
+		setFrame(m_state.playRange().m_first);
 	}
 	else if(ch(">"))
 	{
-		setFrame(m_state.frameCount() - 1);
+		setFrame(m_state.playRange().m_last);
+	}
+	else if(ch("I") || ch("O"))
+	{
+		setInOut(ch("I"));
 	}
 	else if(ch(":"))
 	{
@@ -1850,10 +1945,12 @@ Element Viewer::render()
 		if(!m_player.playing() && m_state.frameCount() > 1)
 		{
 			// Smooth stepping with '.'.
-			const int n = m_state.frameCount();
-			for(int i = 1; i <= 2 && i < n; ++i)
+			const FrameRange range = m_state.playRange();
+			for(int i = 1, f = range.next(m_state.m_frame);
+			    i <= 2 && i < range.count();
+			    ++i, f = range.next(f))
 			{
-				prefetchFrame((m_state.m_frame + i) % n);
+				prefetchFrame(f);
 			}
 		}
 		// The main view rings the picked pixel whichever image it came from.
@@ -1979,11 +2076,37 @@ Element Viewer::render()
 		}
 		body = dbox({body, hbox(std::move(over))});
 	}
-	return vbox({renderHud(info),
-	             body | flex,
-	             m_goto     ? renderGoto()
-	             : typing() ? m_files.annotations().renderInput()
-	                        : renderStatus(info)});
+	return vbox(
+	    {renderHud(info),
+	     body | flex,
+	     m_state.frameCount() > 1 ? renderPlaybar(info) : emptyElement(),
+	     m_goto     ? renderGoto()
+	     : typing() ? m_files.annotations().renderInput()
+	                : renderStatus(info)});
+}
+
+Element Viewer::renderPlaybar(const ImageInfoPtr& info)
+{
+	const Source& src = m_state.m_sources[m_state.m_current];
+	const int n = m_state.frameCount();
+	std::vector<fs::path> frames;
+	frames.reserve(n);
+	for(int i = 0; i < n; ++i)
+	{
+		frames.push_back(src.frame(i));
+	}
+	return m_playbar.render(
+	    {.m_frames = n,
+	     .m_frame = m_state.m_frame,
+	     .m_range = m_state.playRange(),
+	     .m_hasIn = m_state.m_in.has_value(),
+	     .m_hasOut = m_state.m_out.has_value(),
+	     .m_cached = m_ctx.m_svc.cachedLayers(frames, m_state.m_layerLabel),
+	     .m_label = [&src](int f) { return src.frameLabel(f); },
+	     .m_playing = m_player.playing(),
+	     .m_fps = m_player.targetFps(info ? info->m_fps : std::nullopt),
+	     .m_measured = m_player.measuredFps()},
+	    Terminal::Size().dimx);
 }
 
 Element Viewer::renderGoto() const
@@ -2036,31 +2159,13 @@ Element Viewer::renderStatus(const ImageInfoPtr& info)
 	}
 	if(m_state.m_sources.size() > 1 && !m_inspector.isOpen())
 	{
-		right = "n/N next  " + right;
+		right = "n/p next/prev  " + right;
 	}
-	// Playback state lives in the bottom bar: frame / fps left, cache right.
+	// Frame and fps are on the playbar above; the cache stays here.
 	Elements playback;
 	std::string cache;
 	if(m_state.frameCount() > 1)
 	{
-		// Frame number from the file name, then position in the sequence.
-		const std::string label =
-		    m_state.m_sources[m_state.m_current].frameLabel(m_state.m_frame);
-		playback.push_back(text(" frame ") | dim);
-		playback.push_back(text(label.empty() ? "-" : label) | bold |
-		                   color(Color::Magenta));
-		playback.push_back(text(fmt::format(" ({}/{}) ",
-		                                    m_state.m_frame + 1,
-		                                    m_state.frameCount())) |
-		                   color(Color::Magenta));
-		const double target =
-		    m_player.targetFps(info ? info->m_fps : std::nullopt);
-		playback.push_back(text(m_player.playing()
-		                            ? fmt::format(" ▶ {:.1f}/{:.3g}fps ",
-		                                          m_player.measuredFps(),
-		                                          target)
-		                            : fmt::format(" ⏸ {:.3g}fps ", target)) |
-		                   (m_player.playing() ? color(Color::Green) : dim));
 		if(!m_playbackCap)
 		{
 			playback.push_back(text("full res ") | color(Color::Yellow));

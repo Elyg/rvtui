@@ -3,6 +3,7 @@
 #include <ftxui/screen/string.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <string>
 
 using namespace ftxui;
@@ -33,6 +34,30 @@ Element highlighted(std::string_view name,
 		i = j;
 	}
 	return hbox(std::move(runs));
+}
+
+std::vector<size_t> findIgnoringCase(std::string_view hay,
+                                     std::string_view needle)
+{
+	auto lower = [](char c)
+	{ return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); };
+	const auto it =
+	    std::search(hay.begin(),
+	                hay.end(),
+	                needle.begin(),
+	                needle.end(),
+	                [&](char a, char b) { return lower(a) == lower(b); });
+	std::vector<size_t> pos;
+	if(needle.empty() || it == hay.end())
+	{
+		return pos;
+	}
+	const auto at = static_cast<size_t>(it - hay.begin());
+	for(size_t i = 0; i < needle.size(); ++i)
+	{
+		pos.push_back(at + i);
+	}
+	return pos;
 }
 
 Element paneHints(std::string_view prefix,

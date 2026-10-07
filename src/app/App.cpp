@@ -4,6 +4,7 @@
 #include "term/Kitty.h"
 #include "term/Output.h"
 #include "util/Log.h"
+#include "util/Ui.h"
 
 #include <ftxui/component/component.hpp>
 #include <ftxui/screen/string.hpp>
@@ -191,14 +192,35 @@ Element App::render()
 
 Element App::renderHelp()
 {
-	auto row = [](const std::string& k, const std::string& d)
+	// A key and what it does; `kpos` / `dpos` (matches) highlighted.
+	auto line = [](const std::string& k,
+	               const std::string& d,
+	               const std::vector<size_t>& kpos = {},
+	               const std::vector<size_t>& dpos = {})
 	{
-		return hbox(
-		    {text(k) | bold | color(Color::Yellow) | size(WIDTH, EQUAL, 16),
-		     text(d)});
+		return hbox({ui::highlighted(k, kpos, bold | color(Color::Yellow)) |
+		                 size(WIDTH, EQUAL, 16),
+		             ui::highlighted(d, dpos, nothing)});
 	};
-	auto section = [](const std::string& name)
+	auto heading = [](const std::string& name)
 	{ return text(name) | bold | color(Color::Cyan); };
+	// Every row is also kept, under its section, for the search.
+	struct Entry
+	{
+		std::string m_section, m_key, m_text;
+	};
+	std::vector<Entry> entries;
+	std::string current;
+	auto row = [&](const std::string& k, const std::string& d)
+	{
+		entries.push_back({current, k, d});
+		return line(k, d);
+	};
+	auto section = [&](const std::string& name)
+	{
+		current = name;
+		return heading(name);
+	};
 	// Only the keys of the mode you are in.
 	std::string title;
 	Element body;
@@ -225,23 +247,27 @@ Element App::renderHelp()
 		Element left = vbox({
 		    section("Image"),
 		    row("[ / ]", "previous / next layer (AOV)"),
-		    row("n / N", "next / previous image (marked files)"),
+		    row("n / p N", "next / previous image (marked files)"),
 		    row("+ / - / wheel", "zoom"),
 		    row("f / z", "fit / 1:1"),
 		    row("hjkl ←↓↑→ HJKL", "pan (shift = faster)"),
-		    row("drag", "pan (left or middle button)"),
+		    row("right drag", "pan (middle button too)"),
 		    row("t", "tile: all layers, or all marked images"),
 		    row("  +- wheel hjkl", "tile: zoom / pan the sheet (f fit, z 1:1)"),
 		    row("click", "select tile / focus pane"),
 		    row("drag", "column edges: width; files title: height"),
 		    row("Enter (tile)", "open the selected tile"),
-		    row("Ctrl+click", "pick colour (right click works too)"),
+		    row("Ctrl+click", "pick colour"),
 		    row("", "[x, y] as in Nuke: from the bottom-left"),
 		    text(""),
 		    section("Sequence"),
 		    row("space", "play / pause"),
 		    row(", .  < >", "step frame / first, last"),
 		    row(":", "go to frame (file number, nearest)"),
+		    row("I / O", "in / out point here (again: clear)"),
+		    row("", "playback loops in to out; , . < > stay inside"),
+		    row("left drag", "scrub (on the image or the playbar)"),
+		    row("playbar", "click: go to frame, wheel: step"),
 		    row("F", "cycle playback fps"),
 		    row("P", "playback: capped resolution (keeps up) / full res"),
 		});
@@ -260,18 +286,18 @@ Element App::renderHelp()
 		    text(""),
 		    section("Panes"),
 		    row("2 3 4 5 6", "metadata / files / inspector / layers / colour:"),
-		    row("m o i /", "the same, as letters"),
+		    row("m o/x i /", "the same, as letters"),
 		    row("", "open + focus; again while focused closes"),
 		    row("1", "focus the image"),
 		    row("Tab", "hide all panes / bring them back"),
 		    row("  j k  y  Y  x",
 		        "inspector: move, copy line / value, clear pick"),
 		    row("  wheel { }", "metadata: scroll"),
-		    row("  J / K  x", "files: move down / up, drop"),
+		    row("  J / K  d", "files: move down / up, drop"),
 		    row("  e", "files: sequence ⇄ its frames (up to 500)"),
 		    row("  l / h", "files: into a row's annotations / back"),
 		    row("  D D", "files: clear all annotations (in a row: its own)"),
-		    row("  o O Enter x",
+		    row("  a A Enter d",
 		        "annotations: add below / above, edit, delete"),
 		    row("  J / K  g / s", "annotations: reorder, to global / source"),
 		    row("  Tab ↑↓ C-n", "typing: next slot, history, [#key] / [#@key]"),
@@ -288,24 +314,69 @@ Element App::renderHelp()
 		           ? hbox({left, text("   "), right})
 		           : vbox({left, text(""), right});
 	}
-	// Scrollable when the terminal is still too short: j/k ↑/↓ or wheel.
+	if(!m_helpQuery.empty())
+	{
+		// The rows whose key or text holds what was typed, one column,
+		// under their sections; a row's continuation ("" key) comes along.
+		Elements found;
+		std::string shownSection;
+		for(size_t i = 0; i < entries.size(); ++i)
+		{
+			const Entry& e = entries[i];
+			auto kpos = ui::findIgnoringCase(e.m_key, m_helpQuery);
+			auto dpos = ui::findIgnoringCase(e.m_text, m_helpQuery);
+			if(kpos.empty() && dpos.empty())
+			{
+				continue;
+			}
+			if(!e.m_section.empty() && e.m_section != shownSection)
+			{
+				if(!found.empty())
+				{
+					found.push_back(text(""));
+				}
+				found.push_back(heading(e.m_section));
+				shownSection = e.m_section;
+			}
+			found.push_back(line(e.m_key, e.m_text, kpos, dpos));
+			for(size_t j = i + 1;
+			    j < entries.size() && entries[j].m_key.empty() &&
+			    !entries[j].m_text.empty();
+			    ++j)
+			{
+				found.push_back(line("", entries[j].m_text));
+			}
+		}
+		body = found.empty() ? text("no keys match") | dim
+		                     : vbox(std::move(found));
+	}
+	// Scrollable when the terminal is still too short: ↑/↓ or wheel.
 	const int maxH = std::max(5, Terminal::Size().dimy - 6);
 	m_helpScroll = std::clamp(m_helpScroll, 0, 100);
+	const Element footer =
+	    m_helpQuery.empty()
+	        ? text(" type to search   ↑/↓ scroll   ? / Esc close") | dim
+	        : hbox({text(" search › ") | color(Color::Yellow) | bold,
+	                text(m_helpQuery),
+	                text(" ") | inverted,
+	                filler(),
+	                text("  Esc clear ") | dim});
 	return vbox({
 	           text(title) | bold | hcenter,
 	           separator(),
 	           body | focusPositionRelative(0, m_helpScroll / 100.0f) |
 	               vscroll_indicator | yframe | size(HEIGHT, LESS_THAN, maxH),
 	           separator(),
-	           text(" ? / Esc close   j/k scroll") | dim,
+	           footer,
 	       }) |
 	       border | bgcolor(Color::Black);
 }
 
 bool App::helpEvent(Event e)
 {
-	// j/k / arrows / wheel scroll the help (in 10% steps); any other key
-	// closes it.
+	// Typing searches; ↑/↓ / PgUp / PgDn / wheel scroll (in 10% steps);
+	// Esc clears the search, then closes; `?` (nothing typed) closes, as
+	// does any other key.
 	int step = 0;
 	if(e.is_mouse())
 	{
@@ -316,20 +387,51 @@ bool App::helpEvent(Event e)
 			return false;
 		}
 	}
-	else if(e == Event::Character('j') || e == Event::ArrowDown)
+	else if(e == Event::ArrowDown)
 	{
 		step = 1;
 	}
-	else if(e == Event::Character('k') || e == Event::ArrowUp)
+	else if(e == Event::ArrowUp)
 	{
 		step = -1;
+	}
+	else if(e == Event::PageDown || e == Event::PageUp)
+	{
+		step = e == Event::PageDown ? 5 : -5;
 	}
 	if(step != 0)
 	{
 		m_helpScroll = std::clamp(m_helpScroll + step * 10, 0, 100);
 		return true;
 	}
+	if(e == Event::Escape && !m_helpQuery.empty())
+	{
+		m_helpQuery.clear();
+		m_helpScroll = 0;
+		return true;
+	}
+	if(e == Event::Backspace)
+	{
+		// One glyph: drop UTF-8 continuation bytes with it.
+		while(!m_helpQuery.empty() &&
+		      (static_cast<unsigned char>(m_helpQuery.back()) & 0xC0) == 0x80)
+		{
+			m_helpQuery.pop_back();
+		}
+		if(!m_helpQuery.empty())
+		{
+			m_helpQuery.pop_back();
+		}
+		return true;
+	}
+	if(e.is_character() && !(e == Event::Character('?') && m_helpQuery.empty()))
+	{
+		m_helpQuery += e.character();
+		m_helpScroll = 0;
+		return true;
+	}
 	m_help = false;
+	m_helpQuery.clear();
 	return true;
 }
 
