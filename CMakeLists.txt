@@ -69,6 +69,7 @@ add_library(rvtui_core STATIC
     src/app/Playbar.cpp
     src/app/Player.cpp
     src/app/Sheet.cpp
+    src/app/Tutorial.cpp
     src/app/Viewer.cpp
     src/app/ViewerState.cpp
     src/image/Colour.cpp
@@ -117,6 +118,7 @@ if(RVTUI_BUILD_TESTS)
         tests/test_sequence_kitty.cpp
         tests/test_sheet.cpp
         tests/test_transfer.cpp
+        tests/test_tutorial.cpp
         tests/test_util_ui.cpp
         tests/test_viewer.cpp)
     target_link_libraries(rvtui_tests PRIVATE rvtui_core GTest::gtest_main)

@@ -1,5 +1,6 @@
 #include "BuildInfo.h"
 #include "app/App.h"
+#include "app/Tutorial.h"
 #include "image/Loader.h"
 #include "image/Render.h"
 #include "image/Sequence.h"
@@ -188,6 +189,11 @@ int main(int argc, char** argv)
 	             doctor,
 	             "Check the terminal / tmux setup for images and copy, then "
 	             "exit");
+	bool tutorial = false;
+	cli.add_flag("--tutorial",
+	             tutorial,
+	             "Open a folder of sample images to learn rvtui on (rendered "
+	             "into ~/.cache/rvtui/tutorial on first use)");
 	cli.add_option("--cwd-file",
 	               cwdFile,
 	               "On exit, write the last directory here");
@@ -210,6 +216,26 @@ int main(int argc, char** argv)
 		}
 		rv::AppOptions opts;
 		opts.m_paths = paths;
+		if(tutorial)
+		{
+			const auto dir = rv::tutorial::defaultDir();
+			rv::tutorial::ensure(dir,
+			                     {},
+			                     [&dir](int done, int total)
+			                     {
+				                     fmt::print(stderr,
+				                                "\rrendering the tutorial into "
+				                                "{}: {}/{}",
+				                                dir.string(),
+				                                done,
+				                                total);
+				                     if(done == total)
+				                     {
+					                     fmt::print(stderr, "\n");
+				                     }
+			                     });
+			opts.m_paths = {dir.string()};
+		}
 		opts.m_graphics = graphics;
 		opts.m_transfer = transfer;
 		opts.m_chooserFile = chooserFile;
