@@ -4,8 +4,11 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <sstream>
 #include <string_view>
 #include <unistd.h>
+#include <unordered_map>
+#include <utility>
 
 namespace rv
 {
@@ -47,6 +50,60 @@ std::string tmuxDisplay(const std::string& format)
 std::string tmuxOption(const std::string& name)
 {
 	return run(("tmux show -Apv " + name + " 2>/dev/null").c_str());
+}
+
+bool sshAncestor(int pid, const std::string& psTable)
+{
+	std::unordered_map<int, std::pair<int, std::string>> procs; // ppid, comm
+	std::istringstream in(psTable);
+	std::string line;
+	while(std::getline(in, line))
+	{
+		std::istringstream ls(line);
+		int p = 0, pp = 0;
+		std::string comm;
+		if(ls >> p >> pp && std::getline(ls >> std::ws, comm))
+		{
+			procs[p] = {pp, comm};
+		}
+	}
+	// sshd, sshd-session (OpenSSH 9.8+), /usr/sbin/sshd (macOS: the path).
+	for(int hops = 0; hops < 64 && pid > 1; ++hops)
+	{
+		const auto it = procs.find(pid);
+		if(it == procs.end())
+		{
+			return false;
+		}
+		if(it->second.second.find("sshd") != std::string::npos)
+		{
+			return true;
+		}
+		pid = it->second.first;
+	}
+	return false;
+}
+
+bool tmuxClientOverSsh()
+{
+	const std::string pids =
+	    run("tmux list-clients -F '#{client_pid}' "
+	        "-t \"$(tmux display -p '#{session_id}')\" 2>/dev/null");
+	if(pids.empty())
+	{
+		return false;
+	}
+	const std::string table = run("ps -A -o pid=,ppid=,comm= 2>/dev/null");
+	std::istringstream in(pids);
+	int pid = 0;
+	while(in >> pid)
+	{
+		if(sshAncestor(pid, table))
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 bool isKittyTerminal(const std::string& name)
@@ -157,11 +214,6 @@ TermCaps detectCaps(const std::string& forced, const std::string& transfer)
 		}
 	}
 	caps.m_graphics = kitty ? GraphicsMode::KITTY : GraphicsMode::HALF_BLOCK;
-	// Over ssh the terminal is on another machine and can't see our shared
-	// memory. Inside tmux the pane's environment says how the session was
-	// started, which is the best guess available.
-	const bool remote =
-	    !env("SSH_CONNECTION").empty() || !env("SSH_TTY").empty();
 	if(transfer == "shm" || transfer == "file" || transfer == "direct")
 	{
 		caps.m_transfer = transfer == "shm"    ? Transfer::SHARED_MEMORY
@@ -170,6 +222,14 @@ TermCaps detectCaps(const std::string& forced, const std::string& transfer)
 	}
 	else
 	{
+		// Over ssh the terminal is on another machine and can't see our
+		// shared memory or temp files. Inside tmux the pane's environment
+		// only says how the session was started: a client attached over ssh
+		// later (as well as one at this machine's desktop) needs the pixels
+		// sent down the link too.
+		const bool remote = !env("SSH_CONNECTION").empty() ||
+		                    !env("SSH_TTY").empty() ||
+		                    (kitty && caps.m_tmux && tmuxClientOverSsh());
 		caps.m_transfer = remote        ? Transfer::DIRECT
 		                  : caps.m_tmux ? Transfer::TEMP_FILE
 		                                : Transfer::SHARED_MEMORY;

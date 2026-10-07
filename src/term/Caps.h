@@ -41,13 +41,22 @@ struct TermCaps
 std::string tmuxDisplay(const std::string& format);
 /// A tmux option as the current pane sees it (`tmux show -Apv <name>`).
 std::string tmuxOption(const std::string& name);
+/// Whether process `pid` descends from sshd (an ssh login), by `psTable`:
+/// `ps -A -o pid=,ppid=,comm=` output.
+bool sshAncestor(int pid, const std::string& psTable);
+/// Whether a client attached to this pane's tmux session came in over ssh.
+/// The pane's own environment can't tell when the server was started on
+/// this machine (its desktop) and then also attached to from elsewhere: that
+/// client's terminal can't read our temp files or shared memory.
+bool tmuxClientOverSsh();
 /// A TERM / TERM_PROGRAM value of a terminal with kitty graphics + Unicode
 /// placeholders (ghostty, kitty).
 bool isKittyTerminal(const std::string& name);
 
 /// `forced` is "auto" | "kitty" | "halfblock". `transfer` is "auto" | "direct"
-/// | "shm" | "file"; auto picks direct over ssh (the terminal must run on this
-/// machine to read the others), file inside tmux, shared memory otherwise.
+/// | "shm" | "file"; auto picks direct over ssh, or in tmux with any client
+/// attached over ssh (the terminal must run on this machine to read the
+/// others), file inside tmux, shared memory otherwise.
 TermCaps detectCaps(const std::string& forced = "auto",
                     const std::string& transfer = "auto");
 

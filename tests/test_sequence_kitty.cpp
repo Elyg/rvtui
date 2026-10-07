@@ -1,4 +1,5 @@
 #include "image/Sequence.h"
+#include "term/Caps.h"
 #include "term/Kitty.h"
 
 #include <gtest/gtest.h>
@@ -226,6 +227,26 @@ TEST(Sequence, EntriesForArgs)
 	EXPECT_TRUE(none.empty());
 	EXPECT_EQ(missing.size(), 2u);
 	fs::remove_all(dir);
+}
+
+TEST(Caps, SshAncestorWalksUpToSshd)
+{
+	// A tmux client at the desktop, and one in a shell of an ssh login.
+	const std::string ps = "    1     0 systemd\n"
+	                       "  900     1 sshd\n"
+	                       " 1200   900 sshd-session\n"
+	                       " 1201  1200 bash\n"
+	                       " 1300  1201 tmux: client\n"
+	                       " 2000     1 gnome-terminal-\n"
+	                       " 2001  2000 bash\n"
+	                       " 2100  2001 tmux: client\n"
+	                       " 3000     1 /usr/sbin/sshd\n" // macOS: the path
+	                       " 3001  3000 zsh\n";
+	EXPECT_TRUE(rv::sshAncestor(1300, ps));
+	EXPECT_FALSE(rv::sshAncestor(2100, ps));
+	EXPECT_TRUE(rv::sshAncestor(3001, ps));
+	EXPECT_FALSE(rv::sshAncestor(4242, ps)); // gone
+	EXPECT_FALSE(rv::sshAncestor(1300, ""));
 }
 
 TEST(Kitty, ImageIdsNeverCollideWithLiveOnes)

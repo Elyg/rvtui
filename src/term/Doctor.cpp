@@ -152,6 +152,14 @@ std::vector<DoctorCheck> doctorChecks(const std::string& forced)
 		               "remote session: images are sent over the link",
 		               ""});
 	}
+	else if(caps.m_tmux && tmuxClientOverSsh())
+	{
+		out.push_back({L::INFO,
+		               "ssh",
+		               "a tmux client is attached over ssh: images are sent "
+		               "over the link",
+		               ""});
+	}
 	if(forced == "kitty" && !kittyTerm)
 	{
 		out.push_back({L::WARN,
