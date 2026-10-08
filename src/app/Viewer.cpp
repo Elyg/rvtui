@@ -91,7 +91,7 @@ void Viewer::open(std::vector<Entry> entries, bool tile)
 	m_state.m_sources.clear();
 	for(auto& e : entries)
 	{
-		m_state.m_sources.push_back({std::move(e)});
+		m_state.m_sources.push_back({std::move(e), m_fillGaps});
 		m_ctx.m_ann.touch(sourceKey(m_state.m_sources.back()));
 	}
 	m_state.m_current = 0;
@@ -566,6 +566,40 @@ void Viewer::gotoEvent(const Event& e)
 	}
 }
 
+void Viewer::toggleFillGaps()
+{
+	const Source* src = m_state.numberedSource();
+	if(!src)
+	{
+		m_ctx.m_message = "not a sequence";
+		return;
+	}
+	// The frame and in / out stay at their numbers: the indices change.
+	auto number = [&](int f) { return src->frameNumber(f); };
+	const int frame = number(m_state.m_frame);
+	const std::optional<int> in =
+	    m_state.m_in ? std::optional(number(*m_state.m_in)) : std::nullopt;
+	const std::optional<int> out =
+	    m_state.m_out ? std::optional(number(*m_state.m_out)) : std::nullopt;
+	m_fillGaps = !m_fillGaps;
+	for(auto& s : m_state.m_sources)
+	{
+		s.m_fillGaps = m_fillGaps;
+	}
+	m_state.m_frame = src->indexForFrameNumber(frame);
+	if(in)
+	{
+		m_state.m_in = src->indexForFrameNumber(*in);
+	}
+	if(out)
+	{
+		m_state.m_out = src->indexForFrameNumber(*out);
+	}
+	m_ctx.m_message =
+	    m_fillGaps ? "missing frames: hold the nearest (timing as numbered)"
+	               : "missing frames: skipped";
+}
+
 void Viewer::togglePlay()
 {
 	if(m_state.frameCount() < 2)
@@ -861,7 +895,8 @@ bool Viewer::event(Event e)
 	}
 	// Letter aliases for the pane numbers (RV-ish): m metadata, o / x
 	// files, i inspector, / layers. Not while typing, nor `x` in the
-	// inspector, where it clears the pick.
+	// inspector, where it clears the pick, nor `/` in the metadata, where
+	// it filters.
 	if(!typing() && e.is_character())
 	{
 		static const std::pair<const char*, const char*> ALIASES[] =
@@ -869,7 +904,8 @@ bool Viewer::event(Event e)
 		for(const auto& [letter, number] : ALIASES)
 		{
 			if(e == Event::Character(letter) &&
-			   !(focus == Focus::INSPECT && *letter == 'x'))
+			   !(focus == Focus::INSPECT && *letter == 'x') &&
+			   !(focus == Focus::META && *letter == '/'))
 			{
 				e = Event::Character(number);
 				break;
@@ -1010,6 +1046,20 @@ bool Viewer::mouseEvent(Event e, const ImageInfoPtr& info)
 		}
 		return true;
 	}
+	// Drag over the metadata rows: select them (as `v`), for y / Y. Shift
+	// +click rarely arrives (terminals keep it for their own selection).
+	if(m_dragMeta)
+	{
+		if(m.motion == Mouse::Released)
+		{
+			m_dragMeta = false;
+		}
+		else if(m.motion == Mouse::Moved)
+		{
+			m_meta.dragTo(m.y);
+		}
+		return true;
+	}
 	// Drag on the image with the left button to scrub the timeline, at the
 	// playbar's pace (a bar's width of dragging goes the whole sequence);
 	// playback pauses. It stops at the ends rather than wrapping round.
@@ -1122,7 +1172,8 @@ bool Viewer::mouseEvent(Event e, const ImageInfoPtr& info)
 		}
 		else if(overInfo)
 		{
-			m_state.m_focus = Focus::META;
+			m_meta.click(m.y, m.shift || m.control);
+			m_dragMeta = true;
 		}
 		else if(m_inspector.isOpen() && m_inspector.contains(m.x, m.y))
 		{
@@ -1414,6 +1465,10 @@ bool Viewer::keyEvent(const Event& e, const ImageInfoPtr& info)
 		m_tile = !m_tile;
 		m_sheetKey.clear(); // a fresh sheet starts fitted
 	}
+	else if(ch("G"))
+	{
+		toggleFillGaps();
+	}
 	else if(ch("T"))
 	{
 		m_names = !m_names;
@@ -1550,6 +1605,27 @@ Element Viewer::renderHud(const ImageInfoPtr& info)
 	if(!disp.empty())
 	{
 		parts.push_back(text(disp + " ") | color(Color::Yellow));
+	}
+	if(info && !info->m_parts.empty())
+	{
+		// The shown layer's part (multi-part EXRs can differ); the data
+		// window too when it isn't the frame (overscan, a crop).
+		const int li = std::max(0, info->findLayer(m_state.m_layerLabel));
+		const int pi =
+		    info->m_layers.empty()
+		        ? 0
+		        : std::clamp(info->m_layers[li].m_part,
+		                     0,
+		                     static_cast<int>(info->m_parts.size()) - 1);
+		const PartInfo& part = info->m_parts[pi];
+		const Box2i& d = part.m_displayWindow;
+		const Box2i& w = part.m_dataWindow;
+		std::string res = fmt::format(" {}×{}", d.width(), d.height());
+		if(w != d)
+		{
+			res += fmt::format(" (data {}×{})", w.width(), w.height());
+		}
+		parts.push_back(text(res) | dim);
 	}
 	std::string zoom =
 	    m_state.m_view.m_fit

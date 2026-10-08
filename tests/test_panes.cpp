@@ -391,6 +391,72 @@ std::string longPath()
 
 } // namespace
 
+TEST_F(Panes, MetaFilterKeepsMatchesUnderTheirHeading)
+{
+	MetaPane p(m_state, m_c.m_ctx);
+	const auto i = info({"", "diffuse"});
+	EXPECT_TRUE(p.event(key("/"), i));
+	EXPECT_TRUE(p.typing());
+	for(const char* c : {"Z", "i", "p"}) // values: a substring, any case
+	{
+		EXPECT_TRUE(p.event(key(c), i));
+	}
+	EXPECT_TRUE(p.event(key("q"), i)); // typed, not "back"
+	EXPECT_TRUE(p.event(Event::Backspace, i));
+	auto rows = p.shown(i);
+	ASSERT_EQ(rows.size(), 3u); // the title, part 0, compression
+	EXPECT_EQ(rows[2].m_name, "compression");
+	EXPECT_EQ(p.cursor(), 1); // the first row past the title
+	EXPECT_TRUE(p.event(Event::Return, i));
+	EXPECT_FALSE(p.typing());
+	EXPECT_EQ(p.filter(), "Zip"); // kept
+
+	// Names match fuzzily: "dfs" finds the diffuse layer.
+	EXPECT_TRUE(p.event(key("/"), i));
+	for(const char* c : {"d", "f", "s"})
+	{
+		EXPECT_TRUE(p.event(key(c), i));
+	}
+	rows = p.shown(i);
+	ASSERT_EQ(rows.size(), 3u); // the title, "layers", diffuse
+	EXPECT_EQ(rows[2].m_name, "diffuse");
+	EXPECT_TRUE(p.event(Event::Escape, i)); // clears
+	EXPECT_EQ(p.shown(i).size(), p.items(i).size());
+}
+
+TEST_F(Panes, MetaClickMovesTheCursorAndShiftClickSelects)
+{
+	MuteCout mute;
+	MetaPane p(m_state, m_c.m_ctx);
+	const auto i = info({""});
+	const auto rows = drawMeta(p, i);
+	int y = -1;
+	for(int r = 0; r < static_cast<int>(rows.size()); ++r)
+	{
+		if(rows[r].starts_with("  compression"))
+		{
+			y = r;
+		}
+	}
+	ASSERT_GE(y, 0);
+	p.click(y, false);
+	EXPECT_EQ(m_state.m_focus, Focus::META);
+	EXPECT_EQ(p.cursor(), 3);
+	p.click(y + 1, true); // owner, Shift / Ctrl: the two
+	EXPECT_EQ(p.cursor(), 4);
+	EXPECT_TRUE(p.event(key("y"), i));
+	EXPECT_EQ(m_c.m_ctx.m_message, "copied 2 lines");
+
+	// A drag from compression down past the last row: all of them.
+	p.click(y, false);
+	p.dragTo(y + 1);
+	p.dragTo(100);
+	EXPECT_EQ(p.cursor(), static_cast<int>(p.items(i).size()) - 1);
+	EXPECT_TRUE(p.event(key("y"), i));
+	EXPECT_EQ(m_c.m_ctx.m_message,
+	          "copied " + std::to_string(p.items(i).size() - 3) + " lines");
+}
+
 TEST_F(Panes, MetaNamesAndValuesKeepTheirColumns)
 {
 	WideTerminal wide;

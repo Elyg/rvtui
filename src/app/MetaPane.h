@@ -71,9 +71,27 @@ public:
 
 	/// The rows for `info`'s header.
 	std::vector<Item> items(const ImageInfoPtr& info) const;
+	/// items() through the filter: the rows whose name (fuzzy) or value
+	/// (a substring) matches, under their part / "layers" heading.
+	std::vector<Item> shown(const ImageInfoPtr& info) const;
+	/// `/` typing a filter: every key goes to the pane.
+	bool typing() const noexcept
+	{
+		return m_filtering;
+	}
+	const std::string& filter() const noexcept
+	{
+		return m_filter;
+	}
+	/// A click at screen row `y`: focus, the cursor to that row (`extend`,
+	/// Shift / Ctrl: select from the cursor to it, as `v` does).
+	void click(int y, bool extend);
+	/// The mouse dragged to screen row `y` after a click: select from the
+	/// clicked row to it (past the ends: the first / last row drawn).
+	void dragTo(int y);
 	[[nodiscard]] ftxui::Element render(const ImageInfoPtr& info);
-	/// Focused: j/k gg G ^d/^u, v select, y/Y copy, 2 closes. Other keys
-	/// (exposure…) fall through to the viewer.
+	/// Focused: j/k gg G ^d/^u, / filter, v select, y/Y copy, 2 closes. Other
+	/// keys (exposure…) fall through to the viewer.
 	[[nodiscard]] bool event(const ftxui::Event& e, const ImageInfoPtr& info);
 
 private:
@@ -81,6 +99,9 @@ private:
 	static constexpr int NAME_INDENT = 2;
 
 	void copy(const ImageInfoPtr& info, bool valuesOnly);
+	bool filterEvent(const ftxui::Event& e, const ImageInfoPtr& info);
+	/// The cursor to the first row the filter let through (not the title).
+	void toFirstMatch(const ImageInfoPtr& info);
 	/// Width of the name column (incl. the gap before the value).
 	int nameColumn(const std::vector<Item>& all) const;
 	/// The screen lines of one row: one, cut to fit, or (`expand`, the
@@ -93,7 +114,10 @@ private:
 	int m_cursor = 0;
 	int m_anchor = -1; ///< visual-line selection start, -1 = none
 	bool m_pendingG = false;
-	int m_scroll = 0;   ///< first visible row
+	int m_scroll = 0;         ///< first visible row
+	bool m_filtering = false; ///< `/`: typing the filter
+	std::string m_filter;
+	std::vector<int> m_lineItems; ///< per screen line drawn: its row
 	ftxui::Box m_box{}; ///< where it was drawn (wheel scrolling, page size)
 };
 

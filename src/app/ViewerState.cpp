@@ -11,11 +11,22 @@ namespace fs = std::filesystem;
 namespace rv
 {
 
+bool Source::filled() const
+{
+	return m_fillGaps && m_entry.m_kind == Entry::Kind::SEQUENCE &&
+	       !m_entry.m_frameNumbers.empty() &&
+	       m_entry.m_frameNumbers.size() == m_entry.m_frames.size();
+}
+
 fs::path Source::frame(int i) const
 {
 	if(m_entry.m_kind != Entry::Kind::SEQUENCE)
 	{
 		return m_entry.m_path;
+	}
+	if(filled())
+	{
+		return m_entry.m_frames[nearestFile(frameNumber(i))];
 	}
 	return m_entry.m_frames[std::clamp(
 	    i, 0, static_cast<int>(m_entry.m_frames.size()) - 1)];
@@ -23,9 +34,25 @@ fs::path Source::frame(int i) const
 
 int Source::frameCount() const
 {
+	if(filled())
+	{
+		return m_entry.m_frameNumbers.back() - m_entry.m_frameNumbers.front() +
+		       1;
+	}
 	return m_entry.m_kind == Entry::Kind::SEQUENCE
 	           ? static_cast<int>(m_entry.m_frames.size())
 	           : 1;
+}
+
+int Source::frameNumber(int i) const
+{
+	const auto& nums = m_entry.m_frameNumbers;
+	if(m_entry.m_kind != Entry::Kind::SEQUENCE || nums.empty())
+	{
+		return 0;
+	}
+	i = std::clamp(i, 0, frameCount() - 1);
+	return filled() ? nums.front() + i : nums[i];
 }
 
 std::string Source::frameLabel(int i) const
@@ -34,11 +61,27 @@ std::string Source::frameLabel(int i) const
 	{
 		return "";
 	}
-	return std::to_string(
-	    m_entry.m_frameNumbers[std::clamp(i, 0, frameCount() - 1)]);
+	return std::to_string(frameNumber(i));
+}
+
+bool Source::held(int i) const
+{
+	return filled() &&
+	       !std::ranges::binary_search(m_entry.m_frameNumbers, frameNumber(i));
 }
 
 int Source::indexForFrameNumber(int number) const
+{
+	if(filled())
+	{
+		return std::clamp(number - m_entry.m_frameNumbers.front(),
+		                  0,
+		                  frameCount() - 1);
+	}
+	return nearestFile(number);
+}
+
+int Source::nearestFile(int number) const
 {
 	const auto& nums = m_entry.m_frameNumbers;
 	if(m_entry.m_kind != Entry::Kind::SEQUENCE || nums.empty())

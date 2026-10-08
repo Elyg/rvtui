@@ -20,13 +20,24 @@ namespace rv
 struct Source
 {
 	Entry m_entry;
+	/// `G`: a frame per number from the first to the last, a missing one
+	/// showing the nearest file, so 1001, 1050, 1100 plays 100 frames long.
+	bool m_fillGaps = false;
 	/// Frame `i` (clamped); the file itself for a single image.
 	std::filesystem::path frame(int i) const;
 	int frameCount() const;
-	std::string frameLabel(int i) const; ///< number from the file name
-	/// The frame whose file number is `number`, else the nearest one (the
-	/// earlier on a tie); 0 for a single image.
+	std::string frameLabel(int i) const; ///< its number ("" for an image)
+	int frameNumber(int i) const;        ///< its number (0 for an image)
+	/// Whether frame `i` has no file of its own (filled gaps only).
+	bool held(int i) const;
+	/// The frame numbered `number`, else the nearest one (the earlier on a
+	/// tie); 0 for a single image.
 	int indexForFrameNumber(int number) const;
+
+private:
+	bool filled() const; ///< m_fillGaps on a sequence with frames
+	/// The file numbered `number`, else the nearest (the earlier on a tie).
+	int nearestFile(int number) const;
 };
 
 /// Key of a source in the annotations state file: absolute dir / display name

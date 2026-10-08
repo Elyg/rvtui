@@ -778,3 +778,54 @@ TEST_F(ViewerTest, LeftDragOnTheImageScrubsAndStopsAtTheEnds)
 	mouse(0, ftxui::Mouse::Released);
 	EXPECT_EQ(state().m_view.m_centerX, cx); // no pan
 }
+
+TEST(Source, FilledGapsHoldTheNearestFrame)
+{
+	Source s;
+	s.m_entry.m_kind = Entry::Kind::SEQUENCE;
+	for(int n : {1001, 1050, 1075, 1100})
+	{
+		s.m_entry.m_frames.push_back("a." + std::to_string(n) + ".exr");
+		s.m_entry.m_frameNumbers.push_back(n);
+	}
+	EXPECT_EQ(s.frameCount(), 4); // skipped: 4 frames at 24 fps
+	EXPECT_EQ(s.frameLabel(1), "1050");
+
+	s.m_fillGaps = true; // a frame per number
+	EXPECT_EQ(s.frameCount(), 100);
+	EXPECT_EQ(s.frameLabel(24), "1025");
+	EXPECT_EQ(s.frame(24), "a.1001.exr"); // 24 from 1001, 25 from 1050
+	EXPECT_EQ(s.frame(25), "a.1050.exr");
+	EXPECT_EQ(s.frame(99), "a.1100.exr");
+	EXPECT_TRUE(s.held(24));
+	EXPECT_FALSE(s.held(49)); // 1050 is a file
+	EXPECT_EQ(s.indexForFrameNumber(1060), 59);
+	EXPECT_EQ(s.indexForFrameNumber(2000), 99);
+}
+
+TEST_F(ViewerTest, GFillsGapsAndKeepsTheFrameNumber)
+{
+	const fs::path dir = m_dir / "gaps";
+	fs::create_directories(dir);
+	for(int n : {1001, 1050, 1100})
+	{
+		writeExr(dir / ("g." + std::to_string(n) + ".exr"), {"R", "G", "B"});
+	}
+	m_v.open({entryForPath(dir / "g.1001.exr")});
+	ASSERT_EQ(state().frameCount(), 3);
+	press(key(">")); // the last: 1100
+	press(key("G"));
+	EXPECT_EQ(state().frameCount(), 100);
+	EXPECT_EQ(state().m_frame, 99);
+	press(key("G"));
+	EXPECT_EQ(state().frameCount(), 3);
+	EXPECT_EQ(state().m_frame, 2);
+}
+
+TEST_F(ViewerTest, HudShowsTheResolution)
+{
+	m_v.open(
+	    {entryForPath(writeExr(m_dir / "res.exr", {"R", "G", "B"}, 40, 20))});
+	draw();
+	EXPECT_GE(titleAt(m_v, "40×20").first, 0);
+}

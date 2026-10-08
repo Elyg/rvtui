@@ -1,6 +1,7 @@
 #include "app/MetaPane.h"
 
 #include "util/Clipboard.h"
+#include "util/Fuzzy.h"
 #include "util/Ui.h"
 
 #include <ftxui/component/event.hpp>
@@ -9,6 +10,8 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cctype>
+#include <optional>
 
 namespace fs = std::filesystem;
 using namespace ftxui;
@@ -52,6 +55,68 @@ std::vector<MetaPane::Item> MetaPane::items(const ImageInfoPtr& info) const
 		items.push_back({K::LAYER, l.label(), chans});
 	}
 	return items;
+}
+
+namespace
+{
+
+bool containsNoCase(const std::string& s, const std::string& q)
+{
+	return std::ranges::search(s,
+	                           q,
+	                           [](unsigned char a, unsigned char b)
+	                           { return std::tolower(a) == std::tolower(b); })
+	               .begin() != s.end() ||
+	       q.empty();
+}
+
+} // namespace
+
+std::vector<MetaPane::Item> MetaPane::shown(const ImageInfoPtr& info) const
+{
+	using K = Item::Kind;
+	std::vector<Item> all = items(info);
+	if(m_filter.empty())
+	{
+		return all;
+	}
+	auto hit = [&](const Item& it)
+	{
+		return fuzzyMatch(it.m_name, m_filter).has_value() ||
+		       containsNoCase(it.m_value, m_filter);
+	};
+	// The title always; a heading once a row under it matches (or itself).
+	std::vector<Item> out;
+	std::optional<Item> heading;
+	for(Item& it : all)
+	{
+		if(it.m_kind == K::TITLE)
+		{
+			out.push_back(std::move(it));
+		}
+		else if(it.m_kind == K::PART || it.m_kind == K::LAYERS)
+		{
+			heading.reset();
+			if(hit(it))
+			{
+				out.push_back(std::move(it));
+			}
+			else
+			{
+				heading = std::move(it);
+			}
+		}
+		else if(hit(it))
+		{
+			if(heading)
+			{
+				out.push_back(std::move(*heading));
+				heading.reset();
+			}
+			out.push_back(std::move(it));
+		}
+	}
+	return out;
 }
 
 int MetaPane::nameColumn(const std::vector<Item>& all) const
@@ -160,7 +225,7 @@ Elements MetaPane::itemLines(const Item& it, int nameCol, bool expand) const
 
 Element MetaPane::render(const ImageInfoPtr& info)
 {
-	const auto all = items(info);
+	const auto all = shown(info);
 	const int total = static_cast<int>(all.size());
 	const bool focus = focused();
 	m_cursor = std::clamp(m_cursor, 0, std::max(0, total - 1));
@@ -192,6 +257,7 @@ Element MetaPane::render(const ImageInfoPtr& info)
 	const int selLo = m_anchor < 0 ? m_cursor : std::min(m_anchor, m_cursor);
 	const int selHi = m_anchor < 0 ? m_cursor : std::max(m_anchor, m_cursor);
 	Elements lines;
+	m_lineItems.clear();
 	for(int i = m_scroll; i < total; ++i)
 	{
 		Elements item = focus && i == m_cursor
@@ -201,14 +267,41 @@ Element MetaPane::render(const ImageInfoPtr& info)
 		{
 			lines.push_back(focus && i >= selLo && i <= selHi ? line | inverted
 			                                                  : line);
+			m_lineItems.push_back(i);
 		}
 	}
 	Element footer =
-	    focus
-	        ? ui::paneHints(fmt::format("{}/{}", m_cursor + 1, total),
-	                        {{"v", "select"}, {"y/Y", "copy"}, {"2", "close"}})
-	        : ui::paneHints(fmt::format("{}/{}", m_scroll + 1, total),
-	                        {{"2", "focus"}});
+	    focus ? ui::paneHints(fmt::format("{}/{}", m_cursor + 1, total),
+	                          {{"/", "filter"},
+	                           {"v", "select"},
+	                           {"y/Y", "copy"},
+	                           {"2", "close"}})
+	          : ui::paneHints(fmt::format("{}/{}", m_scroll + 1, total),
+	                          {{"2", "focus"}});
+	if(m_filtering || !m_filter.empty())
+	{
+		// As the browser's: the filter, how many rows it lets through.
+		const int matches = static_cast<int>(
+		    std::ranges::count_if(all,
+		                          [](const Item& it)
+		                          {
+			                          return it.m_kind ==
+			                                     Item::Kind::ATTRIBUTE ||
+			                                 it.m_kind == Item::Kind::LAYER ||
+			                                 it.m_kind == Item::Kind::PATH;
+		                          }));
+		footer = hbox({
+		    text(" / ") | bgcolor(Color::Yellow) | color(Color::Black) | bold,
+		    text(" " + m_filter + (m_filtering ? "▏" : "") + " ") |
+		        color(Color::Yellow) | bold,
+		    text(fmt::format("{} match{}  {}",
+		                     matches,
+		                     matches == 1 ? "" : "es",
+		                     m_filtering ? "Enter keep · Esc clear"
+		                                 : "Esc clear")) |
+		        dim,
+		});
+	}
 	// lazygit-style title: `2` focuses this pane.
 	const std::string title =
 	    ui::paneTitle("─[2]─Metadata", m_state.sidePanelWidth());
@@ -223,7 +316,7 @@ Element MetaPane::render(const ImageInfoPtr& info)
 void MetaPane::copy(const ImageInfoPtr& info, bool valuesOnly)
 {
 	using K = Item::Kind;
-	const auto all = items(info);
+	const auto all = shown(info);
 	if(all.empty())
 	{
 		return;
@@ -273,9 +366,113 @@ void MetaPane::copy(const ImageInfoPtr& info, bool valuesOnly)
 	m_anchor = -1;
 }
 
+void MetaPane::toFirstMatch(const ImageInfoPtr& info)
+{
+	const auto all = shown(info);
+	const auto it =
+	    std::ranges::find_if(all,
+	                         [](const Item& r)
+	                         { return r.m_kind != Item::Kind::TITLE; });
+	m_cursor = it == all.end() ? 0 : static_cast<int>(it - all.begin());
+	m_scroll = 0;
+	m_anchor = -1;
+}
+
+bool MetaPane::filterEvent(const Event& e, const ImageInfoPtr& info)
+{
+	const int total = static_cast<int>(shown(info).size());
+	if(e == Event::Escape)
+	{
+		m_filtering = false;
+		m_filter.clear();
+	}
+	else if(e == Event::Return)
+	{
+		m_filtering = false;
+		return true;
+	}
+	else if(e == Event::ArrowDown)
+	{
+		m_cursor = std::min(total - 1, m_cursor + 1);
+		return true;
+	}
+	else if(e == Event::ArrowUp)
+	{
+		m_cursor = std::max(0, m_cursor - 1);
+		return true;
+	}
+	else if(e == Event::Backspace)
+	{
+		// A whole UTF-8 character.
+		while(!m_filter.empty() &&
+		      (static_cast<unsigned char>(m_filter.back()) & 0xC0) == 0x80)
+		{
+			m_filter.pop_back();
+		}
+		if(!m_filter.empty())
+		{
+			m_filter.pop_back();
+		}
+	}
+	else if(e.is_character())
+	{
+		m_filter += e.character();
+	}
+	else
+	{
+		return true; // typing: nothing else reaches the viewer
+	}
+	toFirstMatch(info);
+	return true;
+}
+
+void MetaPane::click(int y, bool extend)
+{
+	const int line = y - m_box.y_min - 1; // under the title
+	m_state.m_focus = Focus::META;
+	if(line < 0 || line >= static_cast<int>(m_lineItems.size()))
+	{
+		return;
+	}
+	const int row = m_lineItems[line];
+	if(extend)
+	{
+		if(m_anchor < 0)
+		{
+			m_anchor = m_cursor;
+		}
+	}
+	else
+	{
+		m_anchor = -1;
+	}
+	m_cursor = row;
+}
+
+void MetaPane::dragTo(int y)
+{
+	if(m_lineItems.empty())
+	{
+		return;
+	}
+	const int line = std::clamp(y - m_box.y_min - 1,
+	                            0,
+	                            static_cast<int>(m_lineItems.size()) - 1);
+	const int row = m_lineItems[line];
+	if(m_anchor < 0 && row != m_cursor)
+	{
+		m_anchor = m_cursor; // the row the drag started on
+	}
+	m_cursor = row;
+}
+
 bool MetaPane::event(const Event& e, const ImageInfoPtr& info)
 {
-	const int total = static_cast<int>(items(info).size());
+	if(m_filtering)
+	{
+		return filterEvent(e, info);
+	}
+	const int total = static_cast<int>(shown(info).size());
 	const int half = std::max(1, (m_box.y_max - m_box.y_min) / 2);
 	auto ch = [&](const char* c) { return e == Event::Character(c); };
 	bool wasG = m_pendingG;
@@ -312,6 +509,12 @@ bool MetaPane::event(const Event& e, const ImageInfoPtr& info)
 	{
 		m_cursor = std::max(0, total - 1);
 	}
+	else if(ch("/"))
+	{
+		m_filtering = true;
+		m_filter.clear();
+		toFirstMatch(info);
+	}
 	else if(ch("v") || ch("V"))
 	{
 		m_anchor = m_anchor < 0 ? m_cursor : -1;
@@ -329,6 +532,10 @@ bool MetaPane::event(const Event& e, const ImageInfoPtr& info)
 		if(m_anchor >= 0)
 		{
 			m_anchor = -1;
+		}
+		else if(!m_filter.empty())
+		{
+			m_filter.clear();
 		}
 		else
 		{

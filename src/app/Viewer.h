@@ -56,7 +56,8 @@ public:
 	/// text, not commands).
 	bool typing() const noexcept
 	{
-		return m_files.annotations().editing() || m_goto.has_value();
+		return m_files.annotations().editing() || m_goto.has_value() ||
+		       m_meta.typing();
 	}
 	/// Commit a line being typed (before the annotations are saved).
 	void finishTyping()
@@ -144,6 +145,8 @@ private:
 	/// A key while typing the frame number; Enter goes to it.
 	void gotoEvent(const ftxui::Event& e);
 	void togglePlay();
+	/// `G`: missing frames held (the nearest shown), or skipped.
+	void toggleFillGaps();
 	void prefetchFrame(int f);
 	/// Start the slots on frame `f` (decoded already) before it is due.
 	void prepareAhead(int f);
@@ -243,6 +246,7 @@ private:
 	ViewerState m_state;
 	bool m_tile = false;
 	bool m_tileSelection = true; ///< dashed highlight on the selected tile
+	bool m_fillGaps = false;     ///< `G`: see Source::m_fillGaps
 	bool m_names = false; ///< `T`: the layer (a tile of images: file) name
 	bool m_fitBesidePanel = false; ///< `f` with a pane open: keep re-fitting
 	bool m_playbackCap = true;     ///< `P`: lower resolution while playing
@@ -289,6 +293,7 @@ private:
 	ftxui::Box m_leftBox{}; ///< the left column
 	int m_dragDivider = 0;  ///< being dragged: 1 = left column's, 2 = right's
 	bool m_dragFiles = false; ///< the files pane's title is being dragged
+	bool m_dragMeta = false;  ///< selecting metadata rows with a drag
 	/// Panning with a right / middle drag: where the mouse last was.
 	std::optional<std::pair<int, int>> m_dragPan;
 	/// Scrubbing with a left drag on the image: the column the mouse was
