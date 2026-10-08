@@ -1215,19 +1215,19 @@ bool Viewer::keyEvent(const Event& e, const ImageInfoPtr& info)
 	}
 	else if(ch("e"))
 	{
-		m_state.m_disp.m_exposure -= 0.5f;
+		m_state.m_disp.m_exposure += 0.5f;
 	}
 	else if(ch("E"))
 	{
-		m_state.m_disp.m_exposure += 0.5f;
+		m_state.m_disp.m_exposure -= 0.5f;
 	}
 	else if(ch("y"))
 	{
-		m_state.m_disp.m_gamma = std::max(0.1f, m_state.m_disp.m_gamma - 0.1f);
+		m_state.m_disp.m_gamma += 0.1f;
 	}
 	else if(ch("Y"))
 	{
-		m_state.m_disp.m_gamma += 0.1f;
+		m_state.m_disp.m_gamma = std::max(0.1f, m_state.m_disp.m_gamma - 0.1f);
 	}
 	else if(ch("s"))
 	{

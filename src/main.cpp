@@ -192,8 +192,8 @@ int main(int argc, char** argv)
 	bool tutorial = false;
 	cli.add_flag("--tutorial",
 	             tutorial,
-	             "Open a folder of sample images to learn rvtui on (rendered "
-	             "into ~/.cache/rvtui/tutorial on first use)");
+	             "A guided tour on sample images (rendered into "
+	             "~/.cache/rvtui/tutorial on first use)");
 	cli.add_option("--cwd-file",
 	               cwdFile,
 	               "On exit, write the last directory here");
@@ -241,6 +241,7 @@ int main(int argc, char** argv)
 		opts.m_chooserFile = chooserFile;
 		opts.m_cwdFile = cwdFile;
 		opts.m_cacheBytes = cacheBytes;
+		opts.m_tutorial = tutorial;
 		return rv::runApp(opts);
 	}
 	catch(const std::exception& e)

@@ -36,7 +36,7 @@ namespace
 {
 
 // Bump when what write() produces changes: ensure() then renders again.
-constexpr int REVISION = 2;
+constexpr int REVISION = 5;
 constexpr const char* STAMP = ".rvtui-tutorial";
 constexpr int FPS = 24;
 constexpr int STILLS = 5;
@@ -406,7 +406,8 @@ void writeChart(const fs::path& path, int w, int h)
 	         "the linear values; srgb, the same encoded for a display (what "
 	         "an 8-bit file would hold, so it looks washed out through the "
 	         "view transform); patch, each patch's number (1-24, wedge 25-35: "
-	         "e / E to see it, or the inspector). Ctrl+click a patch to read "
+	         "E to stop down and see it, or the inspector). Ctrl+click a patch "
+	         "to read "
 	         "every layer at once.");
 }
 
@@ -467,14 +468,15 @@ void writeSky(const fs::path& path, int w, int h)
 			put3(p, WATER_R, px, water);
 		}
 	}
-	writeExr(path,
-	         box(w, h),
-	         box(w, h),
-	         p.m_channels,
-	         "Light far brighter than white: the glow is up to 6 and the "
-	         "sun's disc over 50. e / E: exposure down / up half a stop "
-	         "(0 resets); stop down a few times to see the disc. Layers are "
-	         "light groups: sky + sun + water add up to the beauty.");
+	writeExr(
+	    path,
+	    box(w, h),
+	    box(w, h),
+	    p.m_channels,
+	    "Light far brighter than white: the glow is up to 6 and the "
+	    "sun's disc over 50. e / E: exposure up / down half a stop "
+	    "(0 resets); stop down (E) a few times to see the disc. Layers are "
+	    "light groups: sky + sun + water add up to the beauty.");
 }
 
 // A smooth linear ramp over a stepped one, one channel (Y) per layer.
@@ -505,7 +507,7 @@ void writeRamp(const fs::path& path, int w, int h)
 	         p.m_channels,
 	         "Single-channel layers (Y), shown as grey: a linear ramp 0 to 1 "
 	         "over 11 steps; srgb, the same encoded for a display; inverted, "
-	         "1 - Y. y / Y: gamma -/+ 0.1; s: view transform on / off (raw "
+	         "1 - Y. y / Y: gamma +/- 0.1; s: view transform on / off (raw "
 	         "values).");
 }
 
@@ -668,14 +670,16 @@ constexpr const char* README = R"(rvtui tutorial
 ==============
 
 Images made by `rvtui --tutorial` to try the viewer on.
-Each says what it shows in its `comments` (metadata
-pane: 2 or m). ? lists every key.
+A card in the corner walks you through them: F1 hides
+it, F2 skips a step, F3 goes back one. Each image says
+what it shows in its `comments` (metadata pane: 2 or
+m). ? lists every key.
 
 shot.####.exr  frames {first}-{last}, multi-layer, {fps} fps:
                beauty (RGBA), diffuse, specular,
                albedo, N, Z, mask
 chart.exr      one RGB layer: colour chart, grey wedge
-hdr-sky.exr    values far above 1: exposure (e / E)
+hdr-sky.exr    values far above 1: stop down (E)
 luma-ramp.exr  a single channel (Y)
 overscan.exr   data window bigger than the frame (w)
 nan-inf.exr    NaN and inf pixels (!: paint them)

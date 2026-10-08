@@ -4,6 +4,7 @@
 #include "app/AppContext.h"
 #include "app/Browser.h"
 #include "app/FileWatcher.h"
+#include "app/Tour.h"
 #include "app/Viewer.h"
 #include "image/ImageService.h"
 #include "term/Caps.h"
@@ -15,6 +16,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -34,6 +36,7 @@ struct AppOptions
 	std::string m_cwdFile; ///< write the last directory here on exit
 	/// Decoded-image cache budget.
 	std::uint64_t m_cacheBytes = ImageService::DEFAULT_BUDGET;
+	bool m_tutorial = false; ///< show the tutorial tour (see Tour)
 };
 
 /// Run the TUI until quit; returns the exit code.
@@ -68,6 +71,8 @@ private:
 	void filesChanged(const std::vector<std::filesystem::path>& changed);
 	/// Point the watcher at the directories on screen.
 	void updateWatch();
+	/// What the tour watches, as things are now.
+	[[nodiscard]] TourView tourView() const;
 
 	AppOptions m_opts;
 	ftxui::ScreenInteractive& m_screen;
@@ -85,6 +90,7 @@ private:
 
 	Browser m_browser;
 	Viewer m_viewer;
+	std::optional<Tour> m_tour; ///< --tutorial only
 	std::vector<std::filesystem::path> m_watched;
 	FileWatcher m_watcher; ///< last: stops before the rest goes
 };

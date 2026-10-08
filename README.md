@@ -33,7 +33,7 @@ rvtui 'shot.####.exr' ...  # view sequences
 rvtui 'shot.#.exr'         # a lone # finds the padding itself
 rvtui --dump foo.exr       # print layers, channels and metadata
 rvtui --doctor             # check the terminal / tmux setup
-rvtui --tutorial           # sample images to learn on (rendered into ~/.cache/rvtui/tutorial)
+rvtui --tutorial           # a guided tour on sample images (rendered into ~/.cache/rvtui/tutorial)
 ```
 
 ## Supported terminals

@@ -120,6 +120,10 @@ App::App(const AppOptions& opts, ScreenInteractive& screen)
 		}
 	}
 	updateWatch();
+	if(opts.m_tutorial)
+	{
+		m_tour.emplace();
+	}
 }
 
 App::~App()
@@ -156,6 +160,20 @@ void App::updateWatch()
 	}
 }
 
+TourView App::tourView() const
+{
+	TourView v;
+	v.m_viewer = m_mode == Mode::VIEWER;
+	const ViewerState& s = m_viewer.state();
+	if(v.m_viewer && !s.m_sources.empty())
+	{
+		v.m_open = s.m_sources[s.m_current].m_entry.m_name;
+		v.m_sources = static_cast<int>(s.m_sources.size());
+		v.m_exposure = s.m_disp.m_exposure;
+	}
+	return v;
+}
+
 void App::filesChanged(const std::vector<fs::path>& changed)
 {
 	bool redraw = m_browser.refresh();
@@ -178,6 +196,17 @@ Element App::render()
 	}
 	Element body =
 	    m_mode == Mode::BROWSER ? m_browser.render() : m_viewer.render();
+	if(m_tour && !m_tour->hidden())
+	{
+		// Bottom-right, clear of the playbar and the status bar.
+		body = dbox({body,
+		             vbox({filler(),
+		                   hbox({filler(), m_tour->render(), text("  ")}),
+		                   text(""),
+		                   text(""),
+		                   text(""),
+		                   text("")})});
+	}
 	if(m_help)
 	{
 		body = dbox({body, renderHelp() | clear_under | center});
@@ -274,8 +303,8 @@ Element App::renderHelp()
 		Element right = vbox({
 		    section("Display"),
 		    row("c r g b a u", "colour / R / G / B / alpha / luma"),
-		    row("e / E", "exposure -/+ 0.5 stop"),
-		    row("y / Y", "gamma -/+ 0.1"),
+		    row("e / E", "exposure +/- 0.5 stop"),
+		    row("y / Y", "gamma +/- 0.1"),
 		    row("s", "view transform (sRGB / OCIO view) / raw"),
 		    row("w", "outlines (off): frame + data (dashed) / frame / off"),
 		    row("w (tile)", "selection / frame + selection / frame / off"),
@@ -318,6 +347,10 @@ Element App::renderHelp()
 	{
 		// The rows whose key or text holds what was typed, one column,
 		// under their sections; a row's continuation ("" key) comes along.
+		// In a box the size of the full list, so typing doesn't resize it.
+		body->ComputeRequirement();
+		const int fullW = body->requirement().min_x;
+		const int fullH = body->requirement().min_y;
 		Elements found;
 		std::string shownSection;
 		for(size_t i = 0; i < entries.size(); ++i)
@@ -347,8 +380,9 @@ Element App::renderHelp()
 				found.push_back(line("", entries[j].m_text));
 			}
 		}
-		body = found.empty() ? text("no keys match") | dim
-		                     : vbox(std::move(found));
+		body = (found.empty() ? text("no keys match") | dim
+		                      : vbox(std::move(found))) |
+		       size(WIDTH, EQUAL, fullW) | size(HEIGHT, GREATER_THAN, fullH);
 	}
 	// Scrollable when the terminal is still too short: ↑/↓ or wheel.
 	const int maxH = std::max(5, Terminal::Size().dimy - 6);
@@ -470,7 +504,34 @@ bool App::onEvent(Event e)
 	{
 		m_ctx.m_message.clear(); // messages stay until the next key, not mouse
 	}
-	return m_mode == Mode::BROWSER ? m_browser.event(e) : m_viewer.event(e);
+	if(m_tour && (e == Event::F1 || e == Event::F2 || e == Event::F3))
+	{
+		if(e == Event::F1)
+		{
+			m_tour->press(e); // the last step names it
+			m_tour->toggleHidden();
+		}
+		else if(e == Event::F2)
+		{
+			m_tour->skip();
+		}
+		else
+		{
+			m_tour->back();
+		}
+		return true;
+	}
+	if(m_tour && !typing)
+	{
+		m_tour->press(e);
+	}
+	const bool used =
+	    m_mode == Mode::BROWSER ? m_browser.event(e) : m_viewer.event(e);
+	if(m_tour)
+	{
+		m_tour->update(tourView());
+	}
+	return used;
 }
 
 int runApp(const AppOptions& opts)

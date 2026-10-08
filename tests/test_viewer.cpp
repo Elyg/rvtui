@@ -411,6 +411,21 @@ TEST_F(ViewerTest, OcioViewChangesWhatIsShownAndSGoesRaw)
 	EXPECT_EQ(state().m_focus, Focus::COLOUR);
 }
 
+TEST_F(ViewerTest, LowerCaseRaisesExposureAndGamma)
+{
+	m_v.open({layersEntry()});
+	press(key("e"));
+	EXPECT_FLOAT_EQ(state().m_disp.m_exposure, 0.5f);
+	press(key("E"));
+	press(key("E"));
+	EXPECT_FLOAT_EQ(state().m_disp.m_exposure, -0.5f);
+	press(key("y"));
+	EXPECT_FLOAT_EQ(state().m_disp.m_gamma, 1.1f);
+	press(key("Y"));
+	press(key("Y"));
+	EXPECT_FLOAT_EQ(state().m_disp.m_gamma, 0.9f);
+}
+
 TEST_F(ViewerTest, NextAndPreviousImageWrap)
 {
 	m_v.open({layersEntry(), sequenceEntry()});
