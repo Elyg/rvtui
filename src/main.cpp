@@ -184,6 +184,14 @@ int main(int argc, char** argv)
 		                   : std::string();
 	        },
 	        ""));
+	auto linkRate =
+	    static_cast<std::uint64_t>(rv::kitty::Transmitter::DEFAULT_LINK_RATE);
+	cli.add_option("--link-rate",
+	               linkRate,
+	               "Bytes a second the ssh link carries, e.g. 20M; playback "
+	               "sending images inline is paced to it (default 4M, 0: "
+	               "unpaced)")
+	    ->transform(CLI::AsSizeValue(false));
 	bool doctor = false;
 	cli.add_flag("--doctor",
 	             doctor,
@@ -242,6 +250,7 @@ int main(int argc, char** argv)
 		opts.m_cwdFile = cwdFile;
 		opts.m_cacheBytes = cacheBytes;
 		opts.m_tutorial = tutorial;
+		opts.m_linkRate = static_cast<double>(linkRate);
 		return rv::runApp(opts);
 	}
 	catch(const std::exception& e)

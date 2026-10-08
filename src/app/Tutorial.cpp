@@ -691,18 +691,21 @@ opens, space marks.
 
 1. Enter on shot.####.exr. space plays, , and .
    step, < and > jump to the ends, : goes to a
-   frame, I / O set in and out.
+   frame, Shift+i / Shift+o set in and out.
 2. [ / ] step through the layers; 5 lists them.
-   t tiles every layer side by side.
+   T shows the layer's name; t tiles every layer
+   side by side, each named.
 3. c r g b a u: colour, one channel, alpha, luma.
    e / E exposure, y / Y gamma, 0 resets.
 4. Ctrl+click a pixel: the inspector (4) shows it.
-5. q: back to the browser. Mark a few stills with
-   space, then Enter: n / p step, t tiles them.
+5. q: back to the browser (Shift+q quits rvtui
+   from anywhere). Mark a few stills with space,
+   then Enter: n / p step, t tiles them.
 6. nan-inf.exr: the inspector warns about the NaNs;
    ! paints them.
-7. T writes an annotation over the image, such as
-   [#@frame].
+7. In the files pane (3), l goes into a file's
+   annotations and a adds a line over the image,
+   such as [#@frame].
 )";
 
 std::string replaceAll(std::string s,

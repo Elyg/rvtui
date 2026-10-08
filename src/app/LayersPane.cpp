@@ -41,6 +41,10 @@ Element LayersPane::render(const ImageInfoPtr& info)
 	// The layer on screen, resolved the way the HUD does it.
 	const int current =
 	    info ? std::max(0, info->findLayer(m_state.m_layerLabel)) : -1;
+	// Names are cut to fit the column less the scroll indicator, as in the
+	// files pane: a row too wide makes ftxui squeeze all of its cells (the
+	// marker column shifted). The middle goes: they share long prefixes.
+	const int width = m_state.leftPanelWidth() - 1;
 	Elements rows;
 	for(int i = 0; i < n; ++i)
 	{
@@ -51,11 +55,15 @@ Element LayersPane::render(const ImageInfoPtr& info)
 		{
 			chans += (chans.empty() ? "" : " ") + LayerInfo::shortName(c);
 		}
+		chans = " " + chans + " ";
+		const int room =
+		    std::max(1, width - 3 - static_cast<int>(chans.size()));
 		Element row = hbox({
 		    text(shown ? " ▶ " : "   ") | color(Color::Cyan),
-		    text(l.label()) | (shown ? color(Color::Cyan) | bold : nothing),
+		    text(ui::ellipsizeMiddle(l.label(), room)) |
+		        (shown ? color(Color::Cyan) | bold : nothing),
 		    filler(),
-		    text(" " + chans + " ") | dim,
+		    text(chans) | dim,
 		});
 		if(focus && i == m_cursor)
 		{

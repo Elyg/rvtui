@@ -440,6 +440,37 @@ std::string Transmitter::encode(const Rgba8Image& img, TransmitOptions opt)
 void Transmitter::write(std::string_view bytes, bool flush)
 {
 	m_write(bytes, flush);
+	std::lock_guard lock(m_mutex);
+	if(m_transfer == Transfer::DIRECT && m_linkRate > 0)
+	{
+		const auto now = std::chrono::steady_clock::now();
+		m_linkFree =
+		    std::max(now, m_linkFree) +
+		    std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+		        std::chrono::duration<double>(
+		            static_cast<double>(bytes.size()) / m_linkRate));
+	}
+}
+
+void Transmitter::setLinkRate(double bytesPerSecond)
+{
+	std::lock_guard lock(m_mutex);
+	m_linkRate = std::max(0.0, bytesPerSecond);
+}
+
+double Transmitter::linkRate() const
+{
+	std::lock_guard lock(m_mutex);
+	return m_transfer == Transfer::DIRECT ? m_linkRate : 0.0;
+}
+
+double Transmitter::linkBacklog() const
+{
+	std::lock_guard lock(m_mutex);
+	const auto now = std::chrono::steady_clock::now();
+	return m_linkFree > now
+	           ? std::chrono::duration<double>(m_linkFree - now).count()
+	           : 0.0;
 }
 
 void Transmitter::queueDelete(uint32_t id)

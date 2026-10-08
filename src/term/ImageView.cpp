@@ -406,6 +406,7 @@ ImageSlot::Prepared ImageSlot::prepare(Request req) const
 		p.m_bitmap = std::move(bmp);
 	}
 	p.m_key = key;
+	p.m_fromDraw = req.m_fromDraw;
 	p.m_img = std::move(req.m_img);
 	return p;
 }
@@ -440,7 +441,13 @@ void ImageSlot::apply(Prepared p)
 	m_keepAlive = std::move(p.m_img);
 }
 
-void ImageSlot::requestLocked(const Key& key, LayerImagePtr img)
+bool ImageSlot::sameView(Key a, const Key& b)
+{
+	a.m_img = b.m_img;
+	return a == b;
+}
+
+void ImageSlot::requestLocked(const Key& key, LayerImagePtr img, bool fromDraw)
 {
 	const bool done =
 	    std::ranges::any_of(m_done,
@@ -450,7 +457,7 @@ void ImageSlot::requestLocked(const Key& key, LayerImagePtr img)
 	{
 		return; // on its way, or done and waiting for its draw
 	}
-	m_request = Request{key, std::move(img)};
+	m_request = Request{key, std::move(img), fromDraw};
 	if(!m_worker.joinable())
 	{
 		m_worker = std::jthread([this](std::stop_token st) { encodeLoop(st); });
@@ -500,7 +507,10 @@ void ImageSlot::encodeLoop(std::stop_token stop)
 		bool notify;
 		{
 			std::lock_guard lk(m_jobMu);
-			notify = m_waitFor && *m_waitFor == p.m_key;
+			// Also an older picture a draw asked for: shown meanwhile.
+			notify =
+			    m_waitFor && (*m_waitFor == p.m_key ||
+			                  (p.m_fromDraw && sameView(p.m_key, *m_waitFor)));
 			m_done.push_back(std::move(p));
 			if(m_done.size() > MAX_DONE)
 			{
@@ -564,8 +574,29 @@ void ImageSlot::draw(ftxui::Screen& screen,
 		}
 		else if(!m_last || !(*m_last == key))
 		{
-			requestLocked(key, img);
+			requestLocked(key, img, true);
 			m_waitFor = key; // redraw once it is done
+			// Scrubbing can outrun encoding (inline over ssh is slow): each
+			// picture came back after the draw had moved on, and nothing
+			// showed until the mouse stopped. Meanwhile show the newest one
+			// a draw asked for, while the link keeps up.
+			constexpr double MAX_INTERIM_BACKLOG = 0.1; // seconds
+			auto newer =
+			    std::find_if(m_done.rbegin(),
+			                 m_done.rend(),
+			                 [&](const Prepared& p)
+			                 {
+				                 return p.m_fromDraw && sameView(p.m_key, key);
+			                 });
+			if(newer != m_done.rend() &&
+			   m_tx.linkBacklog() < MAX_INTERIM_BACKLOG)
+			{
+				auto at = std::prev(newer.base());
+				Prepared interim = std::move(*at);
+				m_done.erase(at);
+				lk.unlock();
+				apply(std::move(interim));
+			}
 		}
 		else
 		{

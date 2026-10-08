@@ -198,8 +198,9 @@ int Viewer::reduceFor(const ImageInfo& info, const ImageSlot& slot) const
 	                       info.fitBounds(m_state.m_layerLabel),
 	                       zoomOf(slot),
 	                       pixelCap(),
-	                       m_player.playing() && m_playbackCap ? PLAYBACK_SLACK
-	                                                           : 1.0);
+	                       (m_player.playing() || scrubbing()) && m_playbackCap
+	                           ? PLAYBACK_SLACK
+	                           : 1.0);
 }
 
 int Viewer::cappedBudget() const
@@ -214,14 +215,28 @@ int Viewer::cappedBudget() const
 	if(m_ctx.m_caps.m_transfer == Transfer::DIRECT)
 	{
 		cap /= 2;
+		// And fit a frame period of the link (tick() waits for it): zlib'd
+		// RGBA in base64 runs about 3 bytes a pixel. Below a floor the
+		// picture is too small to see; the frame rate gives instead.
+		constexpr double LINK_BYTES_PER_PIXEL = 3.0;
+		constexpr int MIN_LINK_PIXELS = 100'000;
+		if(const double rate = m_ctx.m_kitty.linkRate(); rate > 0)
+		{
+			const double fps = m_player.targetFps(std::nullopt);
+			const double fit = rate / fps / LINK_BYTES_PER_PIXEL;
+			cap =
+			    std::max(MIN_LINK_PIXELS, std::min(cap, static_cast<int>(fit)));
+		}
 	}
 	return cap;
 }
 
 int Viewer::pixelCap() const
 {
-	const int cap = m_player.playing() && m_playbackCap ? cappedBudget()
-	                                                    : TOTAL_PIXEL_BUDGET;
+	// Scrubbing too: frames go by as fast, and inline each crosses the link.
+	const int cap = (m_player.playing() || scrubbing()) && m_playbackCap
+	                    ? cappedBudget()
+	                    : TOTAL_PIXEL_BUDGET;
 	// Tiles share the budget: the ones on screen, so zooming into the sheet
 	// makes each sharper.
 	return m_tile ? cap / std::max<int>(1, static_cast<int>(m_tiles.size()))
@@ -648,6 +663,10 @@ bool Viewer::tick()
 	const int ahead =
 	    Player::readAhead(svc.budget(), frameBytes, m_state.m_sources.size());
 	const FrameRange range = m_state.playRange();
+	// Inline over ssh, a frame waits until the link is through the last
+	// one: tmux would take them all and play them out long after a pause.
+	const bool linkBusy =
+	    m_ctx.m_kitty.linkBacklog() >= 1.0 / m_player.targetFps(std::nullopt);
 	auto next = m_player.tick(
 	    m_state.m_frame,
 	    range,
@@ -666,7 +685,7 @@ bool Viewer::tick()
 				    ready = false;
 			    }
 		    }
-		    return ready;
+		    return ready && !linkBusy;
 	    });
 	if(!next)
 	{
@@ -999,6 +1018,7 @@ bool Viewer::mouseEvent(Event e, const ImageInfoPtr& info)
 		if(m.motion == Mouse::Released)
 		{
 			m_scrubX.reset();
+			m_scrubMoved = false; // full resolution again
 		}
 		else if(m.motion == Mouse::Moved && m.x != *m_scrubX)
 		{
@@ -1013,6 +1033,7 @@ bool Viewer::mouseEvent(Event e, const ImageInfoPtr& info)
 			m_scrubCarry -= step;
 			setFrame(std::clamp(m_state.m_frame + step, 0, n - 1));
 			m_scrubX = m.x;
+			m_scrubMoved = true;
 		}
 		return true;
 	}
@@ -1393,6 +1414,11 @@ bool Viewer::keyEvent(const Event& e, const ImageInfoPtr& info)
 		m_tile = !m_tile;
 		m_sheetKey.clear(); // a fresh sheet starts fitted
 	}
+	else if(ch("T"))
+	{
+		m_names = !m_names;
+		m_ctx.m_message = m_names ? "names: on" : "names: off";
+	}
 	else if(ch("1"))
 	{
 		m_state.m_focus = Focus::IMAGE;
@@ -1424,13 +1450,6 @@ bool Viewer::keyEvent(const Event& e, const ImageInfoPtr& info)
 	else if(e == Event::Tab)
 	{
 		togglePanes();
-	}
-	else if(ch("T"))
-	{
-		// Quick text: a new line in this source's last-used slot.
-		m_files.setOpen(true);
-		m_state.m_focus = Focus::FILES;
-		m_files.annotations().quickAdd();
 	}
 	else if(ch("A"))
 	{
@@ -1687,8 +1706,9 @@ Element Viewer::renderTiles(const ImageInfoPtr& info, int width)
 
 	// Contact sheet: one tile per source (or per layer), each sized to the
 	// image's aspect so neighbours nearly touch, filled left to right then
-	// down. No captions: the HUD names the selected one. The sheet zooms and
-	// pans as one image; only the tiles on screen are drawn.
+	// down. No captions unless `T` asks for them: the HUD names the selected
+	// one. The sheet zooms and pans as one image; only the tiles on screen
+	// are drawn.
 	const auto dims = Terminal::Size();
 	const SheetArea area{std::max(1, width),
 	                     std::max(1, dims.dimy - 2)}; // minus HUD + status
@@ -1817,12 +1837,19 @@ Element Viewer::renderTiles(const ImageInfoPtr& info, int width)
 			{
 				disp.m_marker = pickedMarker();
 			}
-			img = slot.element(
-			    li,
-			    view,
-			    disp,
+			OverlayText over =
 			    overlayText({m_state.sourceAnnotations(m_ctx.m_ann, src)},
-			                keyLookup(src, ref.m_path, ti, ref.m_layer)));
+			                keyLookup(src, ref.m_path, ti, ref.m_layer));
+			if(m_names)
+			{
+				// `T`: what the tile is, under any annotations there.
+				const std::string name =
+				    bySource              ? m_state.m_sources[i].m_entry.m_name
+				    : ref.m_layer.empty() ? std::string("rgba")
+				                          : ref.m_layer;
+				over[static_cast<int>(Slot::BL)].push_back({{name}});
+			}
+			img = slot.element(li, view, disp, over);
 		}
 		children.push_back(img);
 		boxes.push_back(
@@ -1956,19 +1983,22 @@ Element Viewer::render()
 		// The main view rings the picked pixel whichever image it came from.
 		DisplayParams disp = displayFor(m_state.m_current, path);
 		disp.m_marker = pickedMarker();
-		main =
-		    img ? m_viewSlot->element(
-		              img,
-		              m_state.m_view,
-		              disp,
-		              overlayText({&m_ctx.m_ann.global(),
-		                           m_state.sourceAnnotations(m_ctx.m_ann,
-		                                                     m_state.m_current)},
-		                          keyLookup(m_state.m_current,
-		                                    path,
-		                                    info,
-		                                    m_state.m_layerLabel)))
-		        : text("decoding…") | dim | center;
+		OverlayText over = overlayText(
+		    {&m_ctx.m_ann.global(),
+		     m_state.sourceAnnotations(m_ctx.m_ann, m_state.m_current)},
+		    keyLookup(m_state.m_current, path, info, m_state.m_layerLabel));
+		if(m_names && info && !info->m_layers.empty())
+		{
+			// `T`: the layer on screen, resolved as the HUD does it.
+			const std::string layer =
+			    info->m_layers[std::max(0,
+			                            info->findLayer(m_state.m_layerLabel))]
+			        .label();
+			over[static_cast<int>(Slot::BL)].push_back(
+			    {{layer.empty() ? std::string("rgba") : layer}});
+		}
+		main = img ? m_viewSlot->element(img, m_state.m_view, disp, over)
+		           : text("decoding…") | dim | center;
 		main = main | flex;
 	}
 

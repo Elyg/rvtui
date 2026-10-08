@@ -4,6 +4,7 @@
 #include "term/Caps.h"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -108,6 +109,16 @@ public:
 	/// Send escapes to the terminal.
 	void write(std::string_view bytes, bool flush = false);
 
+	/// Transfer::DIRECT: what the link to the terminal carries, in bytes a
+	/// second (0: unpaced). Nothing pushes back from inside tmux: it buffers
+	/// everything a client over ssh can't take yet (a minute of playback at
+	/// 1 MB/s, still playing out after pause), so the writer paces itself.
+	void setLinkRate(double bytesPerSecond);
+	[[nodiscard]] double linkRate() const;
+	/// Seconds the link still needs for what was written (0 unpaced).
+	[[nodiscard]] double linkBacklog() const;
+	static constexpr double DEFAULT_LINK_RATE = 4e6;
+
 	/// Queue deleting image `id`; takePendingDeletes() hands the escapes over
 	/// for the caller to write when the frame no longer shows it.
 	void queueDelete(uint32_t id);
@@ -126,7 +137,10 @@ private:
 	const bool m_tmux;
 	const Transfer m_transfer;
 	const WriteFn m_write;
-	std::mutex m_mutex;
+	mutable std::mutex m_mutex;
+	double m_linkRate = 0;
+	std::chrono::steady_clock::time_point
+	    m_linkFree; ///< when the link is through what was written
 	std::array<bool, 256> m_used{};
 	uint32_t m_next;
 	std::string m_deletes;

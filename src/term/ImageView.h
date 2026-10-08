@@ -153,6 +153,7 @@ private:
 	{
 		Key m_key;
 		LayerImagePtr m_img;
+		bool m_fromDraw = false; ///< a draw wanted it (not prepareAhead)
 	};
 	struct Prepared
 	{
@@ -163,7 +164,10 @@ private:
 		std::vector<uint8_t> m_cellRgb;
 		std::string m_escapes; ///< kitty
 		Rgba8Image m_bitmap;   ///< half-block
+		bool m_fromDraw = false;
 	};
+	/// Whether `a` and `b` differ in the image only.
+	static bool sameView(Key a, const Key& b);
 
 	/// Render (and with kitty, encode) a request. Any thread; reads only
 	/// m_caps and the transmitter.
@@ -172,7 +176,9 @@ private:
 	void apply(Prepared p);
 	/// Hand `key` to the slot's thread unless it is already asked for or
 	/// done. m_jobMu held.
-	void requestLocked(const Key& key, LayerImagePtr img);
+	void requestLocked(const Key& key,
+	                   LayerImagePtr img,
+	                   bool fromDraw = false);
 	void encodeLoop(std::stop_token stop);
 
 	const TermCaps& m_caps;

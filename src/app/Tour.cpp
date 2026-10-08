@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <string>
 #include <string_view>
 
@@ -47,9 +48,9 @@ const std::array<Step, 15> STEPS = {{
      "scrubs.",
      [](const TourView& n) { return n.m_viewer; }},
     {"In and out",
-     "{I} sets the in point at this frame, {O} the out point: playback "
-     "loops between them. Pressed again on the same frame, each clears its "
-     "point.",
+     "{Shift+i} sets the in point at this frame, {Shift+o} the out point: "
+     "playback loops between them. Pressed again on the same frame, each "
+     "clears its point.",
      [](const TourView& n) { return n.m_viewer; }},
     {"Layers",
      "This render has layers (AOVs). {[} and {]} step through them: "
@@ -73,7 +74,7 @@ const std::array<Step, 15> STEPS = {{
      [](const TourView& n) { return n.m_viewer; }},
     {"Back to the browser",
      "{q} goes back to the browser (from the tiles, twice). The sequence "
-     "keeps its place.",
+     "keeps its place. {Shift+q} quits rvtui from anywhere.",
      [](const TourView& n) { return !n.m_viewer; }},
     {"Brighter than white",
      "Open hdr-sky.exr: its sun is about 50 times brighter than white. {E} "
@@ -144,6 +145,11 @@ bool matches(const std::string& key, Event e)
 	if(key == "Enter")
 	{
 		return e == Event::Return;
+	}
+	if(key.size() == 7 && key.starts_with("Shift+"))
+	{
+		return e == Event::Character(static_cast<char>(
+		                std::toupper(static_cast<unsigned char>(key[6]))));
 	}
 	if(key == "F1")
 	{

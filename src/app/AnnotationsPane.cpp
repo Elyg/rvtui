@@ -255,11 +255,6 @@ void AnnotationsPane::click(int row)
 	}
 }
 
-void AnnotationsPane::quickAdd()
-{
-	startEdit(1, m_lastSlot, -1);
-}
-
 void AnnotationsPane::startEdit(int group, Slot slot, int line, int insertAt)
 {
 	auto& lines = set(group).lines(slot);
@@ -318,7 +313,6 @@ void AnnotationsPane::finishEdit(bool commit)
 	{
 		lines[ed.m_line] = text;
 		m_ctx.m_ann.addHistory(text);
-		m_lastSlot = ed.m_slot;
 	}
 	const int n = static_cast<int>(lines.size());
 	select(ed.m_group, ed.m_slot, n ? std::min(ed.m_line, n - 1) : -1);

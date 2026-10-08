@@ -70,8 +70,6 @@ public:
 	{
 		return m_edit.has_value();
 	}
-	/// `T`: type a new line for the current source, in the last used slot.
-	void quickAdd();
 	void finishEdit(bool commit); ///< `commit`: keep the typed line
 	/// Empty the global set (0), the current source's (1), or everything on
 	/// screen: global and every open source (-1).
@@ -99,7 +97,6 @@ private:
 	int m_group = -1;
 	int m_cursor = 0;            ///< row in rows()
 	bool m_clearPending = false; ///< `D` once asked; a second `D` clears
-	Slot m_lastSlot = Slot::BL;  ///< where `T` starts a line
 	struct Edit
 	{
 		int m_group = 0;

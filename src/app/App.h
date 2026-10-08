@@ -37,6 +37,8 @@ struct AppOptions
 	/// Decoded-image cache budget.
 	std::uint64_t m_cacheBytes = ImageService::DEFAULT_BUDGET;
 	bool m_tutorial = false; ///< show the tutorial tour (see Tour)
+	/// Inline transfer: bytes a second the link carries (0: unpaced).
+	double m_linkRate = kitty::Transmitter::DEFAULT_LINK_RATE;
 };
 
 /// Run the TUI until quit; returns the exit code.

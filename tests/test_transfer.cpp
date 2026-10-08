@@ -457,3 +457,45 @@ TEST(ImageSlot, EveryPictureGoesOutUnderTheSlotsOneId)
 		}
 	}
 }
+
+TEST(Transmitter, InlineWritesRunUpALinkBacklog)
+{
+	// tmux takes all a client over ssh can't yet: the writer keeps count.
+	Capture cap;
+	kitty::Transmitter tx(true, Transfer::DIRECT, cap.fn());
+	EXPECT_EQ(tx.linkBacklog(), 0.0);
+	tx.write(std::string(5000, 'x')); // unpaced: no rate
+	EXPECT_EQ(tx.linkBacklog(), 0.0);
+	tx.setLinkRate(10'000);
+	tx.write(std::string(5000, 'x'));
+	tx.write(std::string(5000, 'x'));
+	const double backlog = tx.linkBacklog(); // a second's worth, draining
+	EXPECT_GT(backlog, 0.8);
+	EXPECT_LE(backlog, 1.0);
+
+	// Shared memory / files never cross a link.
+	kitty::Transmitter local(false, Transfer::SHARED_MEMORY, cap.fn());
+	local.setLinkRate(10'000);
+	local.write(std::string(5000, 'x'));
+	EXPECT_EQ(local.linkRate(), 0.0);
+	EXPECT_EQ(local.linkBacklog(), 0.0);
+}
+
+TEST(ImageSlot, ScrubShowsTheNewestPictureWhileTheNextIsPrepared)
+{
+	// The bug: scrubbing over ssh, every picture was done after the draw had
+	// moved to another frame, so none showed until the mouse stopped.
+	KittySlot k;
+	const auto a = grey(0.2f), b = grey(0.4f), c = grey(0.6f);
+	k.draw(a);
+	ASSERT_TRUE(waitFor([&] { return k.m_ready == 1; }));
+	k.draw(a);
+	ASSERT_EQ(k.m_cap.take().size(), 1u);
+	k.draw(b); // asked for, then the mouse moves on before it is done
+	ASSERT_TRUE(waitFor([&] { return k.m_ready == 2; }));
+	k.draw(c);
+	EXPECT_EQ(k.m_cap.take().size(), 1u); // b, meanwhile
+	ASSERT_TRUE(waitFor([&] { return k.m_ready == 3; }));
+	k.draw(c);
+	EXPECT_EQ(k.m_cap.take().size(), 1u); // then c
+}

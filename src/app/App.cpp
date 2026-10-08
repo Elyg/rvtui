@@ -59,6 +59,7 @@ App::App(const AppOptions& opts, ScreenInteractive& screen)
 	                              { filesChanged(changed); });
                 })
 {
+	m_kitty.setLinkRate(opts.m_linkRate);
 	spdlog::info("terminal '{}', graphics {} ({}), cell {}x{}px, tmux {}",
 	             m_caps.m_terminalName,
 	             graphicsModeName(m_caps.m_graphics),
@@ -286,6 +287,7 @@ Element App::renderHelp()
 		    row("click", "select tile / focus pane"),
 		    row("drag", "column edges: width; files title: height"),
 		    row("Enter (tile)", "open the selected tile"),
+		    row("T", "layer name on the image (tiles: each tile's)"),
 		    row("Ctrl+click", "pick colour"),
 		    row("", "[x, y] as in Nuke: from the bottom-left"),
 		    text(""),
@@ -310,7 +312,6 @@ Element App::renderHelp()
 		    row("w (tile)", "selection / frame + selection / frame / off"),
 		    row("!", "paint NaN (magenta) / inf (cyan) pixels"),
 		    row("0", "reset exposure, gamma, channel"),
-		    row("T", "add annotation text (burn-in style)"),
 		    row("A", "show / hide annotations"),
 		    text(""),
 		    section("Panes"),

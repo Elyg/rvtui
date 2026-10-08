@@ -611,21 +611,15 @@ TEST_F(ViewerTest, TabWithNothingOpenSaysSo)
 	EXPECT_EQ(m_c.m_ctx.m_message, "no panes to show");
 }
 
-TEST_F(ViewerTest, TTypesAnAnnotationLine)
+TEST_F(ViewerTest, TShowsLayerNames)
 {
 	m_v.open({layersEntry()});
-	press(key("T"));
-	EXPECT_TRUE(m_v.typing());
-	EXPECT_EQ(state().m_focus, Focus::FILES);
-	press(key("q")); // text, not "close"
-	press(key("m")); // text, not "metadata"
-	EXPECT_EQ(m_closed, 0);
-	EXPECT_EQ(state().m_focus, Focus::FILES);
-	press(Event::Return);
+	press(key("T")); // the single view too
+	EXPECT_EQ(m_c.m_ctx.m_message, "names: on");
 	EXPECT_FALSE(m_v.typing());
-	const AnnotationSet* set = state().sourceAnnotations(m_c.m_ann, 0);
-	ASSERT_TRUE(set);
-	EXPECT_EQ(set->lines(Slot::BL), (std::vector<std::string>{"qm"}));
+	press(key("t"));
+	press(key("T"));
+	EXPECT_EQ(m_c.m_ctx.m_message, "names: off");
 }
 
 TEST_F(ViewerTest, FpsCyclesUpFromTheFileRate)

@@ -242,13 +242,19 @@ private:
 	std::function<void()> m_onClose;
 	ViewerState m_state;
 	bool m_tile = false;
-	bool m_tileSelection = true;   ///< dashed highlight on the selected tile
+	bool m_tileSelection = true; ///< dashed highlight on the selected tile
+	bool m_names = false; ///< `T`: the layer (a tile of images: file) name
 	bool m_fitBesidePanel = false; ///< `f` with a pane open: keep re-fitting
 	bool m_playbackCap = true;     ///< `P`: lower resolution while playing
 	int m_mouseX = -1, m_mouseY = -1;
 	std::optional<LineEditor> m_goto; ///< `:` frame number being typed
 	Playbar m_playbar;
 	bool m_scrubbing = false; ///< the playbar is being dragged
+	/// Scrubbing on the playbar or the image: frames go by as in playback.
+	bool scrubbing() const noexcept
+	{
+		return m_scrubbing || m_scrubMoved;
+	}
 
 	ImageSlotPtr m_viewSlot;
 	/// A tile on screen: its slot and how it shows its image.
@@ -288,6 +294,7 @@ private:
 	/// Scrubbing with a left drag on the image: the column the mouse was
 	/// at, and the part of a frame not stepped yet.
 	std::optional<int> m_scrubX;
+	bool m_scrubMoved = false; ///< that drag has stepped a frame
 	double m_scrubCarry = 0;
 	struct HiddenPanes
 	{
