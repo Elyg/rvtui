@@ -552,7 +552,9 @@ void ImageSlot::draw(ftxui::Screen& screen,
 	        m_caps.m_cellW,
 	        m_caps.m_cellH,
 	        m_maxPixels,
-	        m_caps.m_graphics};
+	        m_caps.m_graphics,
+	        m_caps.m_transfer,
+	        m_caps.m_resend};
 	m_areaW = cols * pxPerCellX();
 	m_areaH = rows * pxPerCellY();
 	if(kittyMode && m_ready)

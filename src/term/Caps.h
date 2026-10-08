@@ -28,6 +28,9 @@ struct TermCaps
 {
 	GraphicsMode m_graphics = GraphicsMode::HALF_BLOCK;
 	Transfer m_transfer = Transfer::DIRECT;
+	/// Bumped to send every picture again: tmux doesn't replay them to a
+	/// terminal that attaches later.
+	int m_resend = 0;
 	bool m_tmux = false;
 	int m_cellW = 10, m_cellH = 20; ///< pixels per cell
 	std::string m_terminalName;
@@ -49,14 +52,22 @@ bool sshAncestor(int pid, const std::string& psTable);
 /// this machine (its desktop) and then also attached to from elsewhere: that
 /// client's terminal can't read our temp files or shared memory.
 bool tmuxClientOverSsh();
+/// The pids of the clients attached to this pane's tmux session, one a line.
+std::string tmuxClientPids();
+/// tmuxClientOverSsh() for these tmuxClientPids().
+bool tmuxClientOverSsh(const std::string& pids);
+/// What `--transfer auto` picks. `sshEnv`: SSH_CONNECTION / SSH_TTY set;
+/// `tmuxSshClient`: tmuxClientOverSsh(). In tmux only the clients count:
+/// direct with one over ssh, else temp files (each terminal attached reads
+/// them; shared memory goes once read). Outside it: direct over ssh, else
+/// shared memory.
+Transfer autoTransfer(bool tmux, bool sshEnv, bool tmuxSshClient);
 /// A TERM / TERM_PROGRAM value of a terminal with kitty graphics + Unicode
 /// placeholders (ghostty, kitty).
 bool isKittyTerminal(const std::string& name);
 
 /// `forced` is "auto" | "kitty" | "halfblock". `transfer` is "auto" | "direct"
-/// | "shm" | "file"; auto picks direct over ssh, or in tmux with any client
-/// attached over ssh (the terminal must run on this machine to read the
-/// others), file inside tmux, shared memory otherwise.
+/// | "shm" | "file"; auto: see autoTransfer().
 TermCaps detectCaps(const std::string& forced = "auto",
                     const std::string& transfer = "auto");
 

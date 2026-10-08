@@ -145,20 +145,30 @@ std::vector<DoctorCheck> doctorChecks(const std::string& forced)
 		out.push_back({L::INFO, "clipboard", "OSC 52 to the terminal", ""});
 	}
 
-	if(!env("SSH_CONNECTION").empty() || !env("SSH_TTY").empty())
-	{
-		out.push_back({L::INFO,
-		               "ssh",
-		               "remote session: images are sent over the link, "
-		               "paced to --link-rate",
-		               ""});
-	}
-	else if(caps.m_tmux && tmuxClientOverSsh())
+	const bool sshEnv =
+	    !env("SSH_CONNECTION").empty() || !env("SSH_TTY").empty();
+	if(caps.m_tmux && tmuxClientOverSsh())
 	{
 		out.push_back({L::INFO,
 		               "ssh",
 		               "a tmux client is attached over ssh: images are sent "
 		               "over the link, paced to --link-rate",
+		               ""});
+	}
+	else if(caps.m_tmux && sshEnv)
+	{
+		out.push_back({L::INFO,
+		               "ssh",
+		               "tmux was started over ssh, but no client is attached "
+		               "over ssh now: images stay on this machine",
+		               ""});
+	}
+	else if(sshEnv)
+	{
+		out.push_back({L::INFO,
+		               "ssh",
+		               "remote session: images are sent over the link, "
+		               "paced to --link-rate",
 		               ""});
 	}
 	if(forced == "kitty" && !kittyTerm)

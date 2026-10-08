@@ -4,6 +4,7 @@
 #include "term/Caps.h"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <deque>
@@ -93,6 +94,12 @@ public:
 	{
 		return m_transfer;
 	}
+	/// Switch how pixels go from the next encode on (e.g. a terminal attached
+	/// to tmux over ssh). Pictures already out stay as they were sent.
+	void setTransfer(Transfer t) noexcept
+	{
+		m_transfer = t;
+	}
 
 	/// Non-zero 8-bit image id (placeholder foreground is a 256-palette
 	/// colour), never one still held: two live slots sharing an id would show
@@ -135,7 +142,7 @@ public:
 
 private:
 	const bool m_tmux;
-	const Transfer m_transfer;
+	std::atomic<Transfer> m_transfer;
 	const WriteFn m_write;
 	mutable std::mutex m_mutex;
 	double m_linkRate = 0;
@@ -147,7 +154,7 @@ private:
 	void removeLocal(const std::string& name) const;
 	void removeStaleFiles() const;
 
-	std::string m_fileDir; ///< Transfer::FILE: where the files go
+	std::string m_fileDir; ///< Transfer::TEMP_FILE: where the files go
 	/// Per image id: created, maybe not read; oldest first.
 	std::unordered_map<uint32_t, std::deque<std::string>> m_local;
 	uint64_t m_localCount = 0;

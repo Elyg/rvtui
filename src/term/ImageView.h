@@ -146,6 +146,10 @@ private:
 		DisplayParams m_disp;
 		int m_cols = 0, m_rows = 0, m_cellW = 0, m_cellH = 0, m_maxPixels = 0;
 		GraphicsMode m_mode = GraphicsMode::HALF_BLOCK;
+		/// How it went out: a switch sends it again (a terminal attached
+		/// over ssh can't read what went through files).
+		Transfer m_transfer = Transfer::DIRECT;
+		int m_resend = 0; ///< TermCaps::m_resend
 		bool operator==(const Key&) const = default;
 	};
 	/// What a draw needs rendered, and what comes back.

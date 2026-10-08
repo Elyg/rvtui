@@ -84,11 +84,19 @@ bool sshAncestor(int pid, const std::string& psTable)
 	return false;
 }
 
+std::string tmuxClientPids()
+{
+	return run("tmux list-clients -F '#{client_pid}' "
+	           "-t \"$(tmux display -p '#{session_id}')\" 2>/dev/null");
+}
+
 bool tmuxClientOverSsh()
 {
-	const std::string pids =
-	    run("tmux list-clients -F '#{client_pid}' "
-	        "-t \"$(tmux display -p '#{session_id}')\" 2>/dev/null");
+	return tmuxClientOverSsh(tmuxClientPids());
+}
+
+bool tmuxClientOverSsh(const std::string& pids)
+{
 	if(pids.empty())
 	{
 		return false;
@@ -104,6 +112,19 @@ bool tmuxClientOverSsh()
 		}
 	}
 	return false;
+}
+
+Transfer autoTransfer(bool tmux, bool sshEnv, bool tmuxSshClient)
+{
+	// Over ssh the terminal is on another machine and can't see our shared
+	// memory or temp files. Inside tmux the pane's SSH_* variables only say
+	// how the server was started (over ssh once, attached at the desk now:
+	// inline, many times slower); the clients attached say who is watching.
+	if(tmux)
+	{
+		return tmuxSshClient ? Transfer::DIRECT : Transfer::TEMP_FILE;
+	}
+	return sshEnv ? Transfer::DIRECT : Transfer::SHARED_MEMORY;
 }
 
 bool isKittyTerminal(const std::string& name)
@@ -222,17 +243,11 @@ TermCaps detectCaps(const std::string& forced, const std::string& transfer)
 	}
 	else
 	{
-		// Over ssh the terminal is on another machine and can't see our
-		// shared memory or temp files. Inside tmux the pane's environment
-		// only says how the session was started: a client attached over ssh
-		// later (as well as one at this machine's desktop) needs the pixels
-		// sent down the link too.
-		const bool remote = !env("SSH_CONNECTION").empty() ||
-		                    !env("SSH_TTY").empty() ||
-		                    (kitty && caps.m_tmux && tmuxClientOverSsh());
-		caps.m_transfer = remote        ? Transfer::DIRECT
-		                  : caps.m_tmux ? Transfer::TEMP_FILE
-		                                : Transfer::SHARED_MEMORY;
+		caps.m_transfer =
+		    autoTransfer(caps.m_tmux,
+		                 !env("SSH_CONNECTION").empty() ||
+		                     !env("SSH_TTY").empty(),
+		                 kitty && caps.m_tmux && tmuxClientOverSsh());
 	}
 	refreshCellSize(caps);
 	return caps;

@@ -313,7 +313,7 @@ std::string deletePlacements(uint32_t id, bool tmux)
 Transmitter::Transmitter(bool tmux, Transfer transfer, WriteFn write)
     : m_tmux(tmux), m_transfer(transfer), m_write(std::move(write))
 {
-	if(m_transfer == Transfer::TEMP_FILE)
+	// Whatever the transfer now: it can switch to files later.
 	{
 		std::error_code ec;
 		m_fileDir = std::filesystem::temp_directory_path(ec).string();
@@ -369,7 +369,8 @@ void Transmitter::removeStaleFiles() const
 
 void Transmitter::removeLocal(const std::string& name) const
 {
-	if(m_transfer == Transfer::TEMP_FILE)
+	// By the name, not the transfer now: it may have switched since.
+	if(name.ends_with(".rgba"))
 	{
 		unlink(name.c_str());
 	}
@@ -405,9 +406,9 @@ void Transmitter::releaseId(uint32_t id)
 std::string Transmitter::encode(const Rgba8Image& img, TransmitOptions opt)
 {
 	opt.m_tmux = m_tmux;
-	if(m_transfer != Transfer::DIRECT)
+	if(const Transfer transfer = m_transfer; transfer != Transfer::DIRECT)
 	{
-		const bool file = m_transfer == Transfer::TEMP_FILE;
+		const bool file = transfer == Transfer::TEMP_FILE;
 		std::string name;
 		{
 			std::lock_guard lock(m_mutex);

@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace rv
@@ -71,6 +72,9 @@ private:
 	/// On the UI thread: files changed on disk (see FileWatcher). Re-list,
 	/// re-scan the open sequences, drop stale decodes, redraw.
 	void filesChanged(const std::vector<std::filesystem::path>& changed);
+	/// On the UI thread: other terminals attached to tmux. Send every
+	/// picture again, `t`'s way.
+	void clientsChanged(Transfer t);
 	/// Point the watcher at the directories on screen.
 	void updateWatch();
 	/// What the tour watches, as things are now.
@@ -94,6 +98,8 @@ private:
 	Viewer m_viewer;
 	std::optional<Tour> m_tour; ///< --tutorial only
 	std::vector<std::filesystem::path> m_watched;
+	/// --transfer auto in tmux: re-checks the clients attached.
+	std::jthread m_clientCheck;
 	FileWatcher m_watcher; ///< last: stops before the rest goes
 };
 

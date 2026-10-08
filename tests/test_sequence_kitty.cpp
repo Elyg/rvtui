@@ -249,6 +249,18 @@ TEST(Caps, SshAncestorWalksUpToSshd)
 	EXPECT_FALSE(rv::sshAncestor(1300, ""));
 }
 
+TEST(Caps, AutoTransferInTmuxGoesByTheClients)
+{
+	using rv::Transfer;
+	// The bug: a tmux server started over ssh, attached at the desk later,
+	// kept SSH_CONNECTION in its panes and sent every frame inline.
+	EXPECT_EQ(rv::autoTransfer(true, true, false), Transfer::TEMP_FILE);
+	EXPECT_EQ(rv::autoTransfer(true, false, true), Transfer::DIRECT);
+	EXPECT_EQ(rv::autoTransfer(true, false, false), Transfer::TEMP_FILE);
+	EXPECT_EQ(rv::autoTransfer(false, true, false), Transfer::DIRECT);
+	EXPECT_EQ(rv::autoTransfer(false, false, false), Transfer::SHARED_MEMORY);
+}
+
 TEST(Kitty, ImageIdsNeverCollideWithLiveOnes)
 {
 	// The bug: ids wrapped after 255 allocations onto slots still on screen.

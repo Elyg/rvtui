@@ -12,7 +12,9 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <condition_variable>
 #include <fstream>
+#include <mutex>
 
 namespace fs = std::filesystem;
 using namespace ftxui;
@@ -24,6 +26,8 @@ namespace
 {
 // How often the disk is checked for changes.
 constexpr auto POLL_INTERVAL = std::chrono::milliseconds(1000);
+// How often tmux's attached clients are checked (--transfer auto).
+constexpr auto CLIENT_CHECK_INTERVAL = std::chrono::seconds(3);
 } // namespace
 
 App::App(const AppOptions& opts, ScreenInteractive& screen)
@@ -60,6 +64,40 @@ App::App(const AppOptions& opts, ScreenInteractive& screen)
                 })
 {
 	m_kitty.setLinkRate(opts.m_linkRate);
+	// Who watches a tmux session changes while rvtui runs: a laptop attaches
+	// over ssh (it can't read our files), then leaves (files are faster).
+	if(opts.m_transfer == "auto" && m_caps.m_tmux &&
+	   m_caps.m_graphics == GraphicsMode::KITTY)
+	{
+		m_clientCheck = std::jthread(
+		    [this, clients = tmuxClientPids()](std::stop_token stop) mutable
+		    {
+			    std::mutex mu;
+			    std::condition_variable_any cv;
+			    std::unique_lock lock(mu);
+			    for(;;)
+			    {
+				    cv.wait_for(lock,
+				                stop,
+				                CLIENT_CHECK_INTERVAL,
+				                [] { return false; });
+				    if(stop.stop_requested())
+				    {
+					    return;
+				    }
+				    std::string now = tmuxClientPids();
+				    if(now != clients)
+				    {
+					    clients = std::move(now);
+					    const Transfer t =
+					        autoTransfer(true,
+					                     false,
+					                     tmuxClientOverSsh(clients));
+					    m_screen.Post([this, t] { clientsChanged(t); });
+				    }
+			    }
+		    });
+	}
 	spdlog::info("terminal '{}', graphics {} ({}), cell {}x{}px, tmux {}",
 	             m_caps.m_terminalName,
 	             graphicsModeName(m_caps.m_graphics),
@@ -173,6 +211,23 @@ TourView App::tourView() const
 		v.m_exposure = s.m_disp.m_exposure;
 	}
 	return v;
+}
+
+void App::clientsChanged(Transfer t)
+{
+	// Every picture again: the new mode, and a terminal that just attached
+	// has none of them.
+	++m_caps.m_resend;
+	if(t != m_caps.m_transfer)
+	{
+		m_caps.m_transfer = t;
+		m_kitty.setTransfer(t);
+		spdlog::info("transfer now {}", transferName(t));
+		m_ctx.m_message = t == Transfer::DIRECT
+		                      ? "a terminal attached over ssh: images go inline"
+		                      : "no terminal over ssh: images go through files";
+	}
+	m_screen.PostEvent(Event::Custom);
 }
 
 void App::filesChanged(const std::vector<fs::path>& changed)

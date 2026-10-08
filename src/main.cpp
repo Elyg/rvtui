@@ -165,7 +165,8 @@ int main(int argc, char** argv)
 	cli.add_option("--transfer",
 	               transfer,
 	               "How kitty images reach the terminal: auto | direct | shm | "
-	               "file (auto: direct over ssh, file in tmux, else shm)")
+	               "file (auto: in tmux, direct with a client attached over "
+	               "ssh, else file; outside it, direct over ssh, else shm)")
 	    ->check(CLI::IsMember({"auto", "direct", "shm", "file"}));
 	cli.add_option(
 	    "--chooser-file",
