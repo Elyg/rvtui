@@ -221,6 +221,34 @@ TEST_F(ViewerTest, FrameSteppingWrapsRound)
 	EXPECT_FALSE(m_v.playing());
 }
 
+TEST_F(ViewerTest, MetadataFilterDrawsAndEndsWhenFocusLeaves)
+{
+	m_v.open({layersEntry()});
+	draw();
+	press(key("2")); // open and focus the metadata
+	press(key("/"));
+	EXPECT_TRUE(m_v.typing());
+	press(key("z"));
+	// The status line is the viewer's, not the annotation input (none is
+	// being edited).
+	ftxui::Screen screen(80, 24);
+	ftxui::Render(screen, m_v.render());
+
+	// A click on the image (the wheel too) gets through the filter, and
+	// takes the focus and the typing with it.
+	ftxui::Mouse m{};
+	m.button = ftxui::Mouse::Left;
+	m.motion = ftxui::Mouse::Pressed;
+	m.x = 5;
+	m.y = 10;
+	(void)m_v.event(Event::Mouse("", m));
+	m.motion = ftxui::Mouse::Released;
+	(void)m_v.event(Event::Mouse("", m));
+	EXPECT_NE(state().m_focus, Focus::META);
+	EXPECT_FALSE(m_v.typing());
+	ftxui::Render(screen, m_v.render());
+}
+
 TEST_F(ViewerTest, ColonGoesToAFrameNumberOrTheNearest)
 {
 	for(int n : {1001, 1002, 1005})
@@ -363,7 +391,7 @@ TEST_F(ViewerTest, CtrlClickPicksAPixelUntilReopened)
 	m.motion = ftxui::Mouse::Pressed;
 	m.x = 40;
 	m.y = 12;
-	press(Event::Mouse("", m));
+	(void)m_v.event(Event::Mouse("", m));
 	ASSERT_TRUE(waitFor(
 	    [&]
 	    {

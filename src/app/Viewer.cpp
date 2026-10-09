@@ -893,6 +893,10 @@ bool Viewer::event(Event e)
 	{
 		focus = Focus::IMAGE;
 	}
+	if(focus != Focus::META)
+	{
+		m_meta.stopTyping(); // clicked away mid-filter: keys are keys again
+	}
 	// Letter aliases for the pane numbers (RV-ish): m metadata, o / x
 	// files, i inspector, / layers. Not while typing, nor `x` in the
 	// inspector, where it clears the pick, nor `/` in the metadata, where
@@ -2186,9 +2190,10 @@ Element Viewer::render()
 	    {renderHud(info),
 	     body | flex,
 	     m_state.frameCount() > 1 ? renderPlaybar(info) : emptyElement(),
-	     m_goto     ? renderGoto()
-	     : typing() ? m_files.annotations().renderInput()
-	                : renderStatus(info)});
+	     m_goto ? renderGoto()
+	     : m_files.annotations().editing()
+	         ? m_files.annotations().renderInput()
+	         : renderStatus(info)});
 }
 
 Element Viewer::renderPlaybar(const ImageInfoPtr& info)

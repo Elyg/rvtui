@@ -79,6 +79,11 @@ public:
 	{
 		return m_filtering;
 	}
+	/// Leave the filter as typed (focus went elsewhere).
+	void stopTyping() noexcept
+	{
+		m_filtering = false;
+	}
 	const std::string& filter() const noexcept
 	{
 		return m_filter;

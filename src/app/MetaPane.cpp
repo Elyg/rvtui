@@ -380,6 +380,10 @@ void MetaPane::toFirstMatch(const ImageInfoPtr& info)
 
 bool MetaPane::filterEvent(const Event& e, const ImageInfoPtr& info)
 {
+	if(e.is_mouse())
+	{
+		return false; // the wheel, a click elsewhere: the viewer's
+	}
 	const int total = static_cast<int>(shown(info).size());
 	if(e == Event::Escape)
 	{
