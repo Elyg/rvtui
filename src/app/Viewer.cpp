@@ -2190,10 +2190,9 @@ Element Viewer::render()
 	    {renderHud(info),
 	     body | flex,
 	     m_state.frameCount() > 1 ? renderPlaybar(info) : emptyElement(),
-	     m_goto ? renderGoto()
-	     : m_files.annotations().editing()
-	         ? m_files.annotations().renderInput()
-	         : renderStatus(info)});
+	     m_goto                            ? renderGoto()
+	     : m_files.annotations().editing() ? m_files.annotations().renderInput()
+	                                       : renderStatus(info)});
 }
 
 Element Viewer::renderPlaybar(const ImageInfoPtr& info)
